@@ -310,6 +310,7 @@ var api = null;
 var viewYear, viewMonth;
 var selectedDate = todayIso();
 var monthTags = {};       // { "9": ["tag1","tag2"] }
+var monthOcc = {};        // { "12": [occurrence, ...] } upcoming recurring occurrences
 var monthPlans = {};      // { "12": true } days holding an entry marked 예정
 var nextItems = [];       // [{done,text,added,doneDate}]
 var dayData = { entries: [], focus: null, mood: null };
@@ -365,8 +366,14 @@ function loadMonth(){
   Promise.all([
     api.get_month_tags(viewYear, viewMonth),
     api.get_next_list(),
-    api.get_month_plans(viewYear, viewMonth)
+    api.get_month_plans(viewYear, viewMonth),
+    api.get_month_occurrences(viewYear, viewMonth)
   ]).then(function(results){
+    monthOcc = {};
+    (results[3] || []).forEach(function(o){
+      var day = String(isoToDate(o.date).getDate());
+      (monthOcc[day] = monthOcc[day] || []).push(o);
+    });
     monthTags = results[0] || {};
     nextItems = results[1] || [];
     monthPlans = {};
@@ -393,6 +400,7 @@ function loadDay(dateStr){
 
 function switchToDate(dateStr){
   closeSearch();
+  closeRecur();
   flushSave();
   selectedDate = dateStr;
   loadDay(selectedDate);
@@ -537,10 +545,19 @@ function fillDotRow(row, day){
   });
   // ◇ = something planned for a day that hasn't passed yet
   var dateStr = viewYear+'-'+pad(viewMonth)+'-'+pad(day);
-  if(monthPlans[String(day)] && dateStr >= todayIso()){
+  var occs = monthOcc[String(day)];
+  if((monthPlans[String(day)] || occs) && dateStr >= todayIso()){
     var mark = document.createElement('span');
     mark.className = 'plan-mark';
     mark.textContent = '◇';
+    if(occs){
+      mark.classList.add('plan-click');
+      mark.title = '이번 회차 날짜 변경';
+      mark.addEventListener('click', function(e){
+        e.stopPropagation();
+        openOccPopup(mark, day);
+      });
+    }
     row.appendChild(mark);
   }
 }
@@ -1129,6 +1146,7 @@ function parseSearchQuery(){
 }
 
 function openSearch(query, mode, exactTag){
+  closeRecur();
   closeTagSuggest();
   searchState = { query: query || '', mode: mode || 'all', anchor: isoToDate(selectedDate), exactTag: exactTag || null };
   var input = document.getElementById('search-input');
@@ -1931,5 +1949,338 @@ function init(){
 }
 
 window.addEventListener('pywebviewready', init);
+
+/* ---------------- recurring schedules ---------------- */
+
+var WEEKDAY_NAMES = ['일', '월', '화', '수', '목', '금', '토'];
+var RECUR_FREQS = [['daily', '매일'], ['weekdays', '평일'], ['weekly', '매주'], ['biweekly', '격주'], ['monthly', '매달'], ['once', '한 번만']];
+var recurRules = [];
+var recurForm = null;          // rule being edited (copy), or null
+var recurDeleteArmed = false;
+
+function recurEl(tag, cls, text){
+  var e = document.createElement(tag);
+  if(cls) e.className = cls;
+  if(text !== undefined) e.textContent = text;
+  return e;
+}
+
+function recurSummary(r){
+  var s;
+  if(r.freq === 'daily') s = '매일';
+  else if(r.freq === 'weekdays') s = '평일';
+  else if(r.freq === 'weekly') s = '매주 ' + WEEKDAY_NAMES[r.weekday];
+  else if(r.freq === 'biweekly') s = '격주 ' + WEEKDAY_NAMES[r.weekday];
+  else if(r.freq === 'monthly') s = (r.interval > 1 ? r.interval + '개월마다 ' : '매달 ') + r.day + '일';
+  else s = shortDate(r.start);
+  if(r.time) s += ' · ' + r.time;
+  return s;
+}
+
+function newRecurForm(){
+  var now = new Date();
+  return { id: '', text: '', freq: 'monthly', weekday: now.getDay(), interval: 1, day: now.getDate(),
+           time: '', start: todayIso(), end: '', next: null };
+}
+
+function openRecur(){
+  closeSearch();
+  closeTagSuggest();
+  closeOccPopup();
+  document.querySelector('#main .main-header').style.display = 'none';
+  document.getElementById('search-results').style.display = 'none';
+  document.querySelectorAll('#main .acc-section').forEach(function(s){ s.style.display = 'none'; });
+  document.getElementById('recur-panel').style.display = '';
+  recurForm = null;
+  loadRecur();
+}
+
+function closeRecur(){
+  var panel = document.getElementById('recur-panel');
+  if(panel.style.display === 'none') return;
+  panel.style.display = 'none';
+  document.querySelector('#main .main-header').style.display = '';
+  document.querySelectorAll('#main .acc-section').forEach(function(s){ s.style.display = ''; });
+}
+
+function loadRecur(){
+  api.list_recurring().then(function(rules){
+    recurRules = rules || [];
+    renderRecur();
+  });
+}
+
+// the day's log or the calendar may have just received auto-written entries
+function refreshAfterRecurChange(){
+  flushSave();
+  loadMonth();
+  loadDay(selectedDate);
+}
+
+function renderRecur(){
+  var panel = document.getElementById('recur-panel');
+  panel.innerHTML = '';
+
+  var head = recurEl('div', 'recur-head');
+  var close = recurEl('div', 'menu-trigger');
+  close.setAttribute('role', 'button');
+  close.setAttribute('tabindex', '0');
+  close.setAttribute('aria-label', '반복 일정 닫기');
+  close.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+  close.addEventListener('click', closeRecur);
+  onActivateKey(close, closeRecur);
+  head.appendChild(close);
+  head.appendChild(recurEl('span', 'recur-title', '반복 일정'));
+  panel.appendChild(head);
+
+  var body = recurEl('div', 'recur-body');
+  var list = recurEl('div', 'recur-list');
+  var add = recurEl('div', 'recur-add', '+ 새 반복 일정');
+  add.setAttribute('role', 'button');
+  add.setAttribute('tabindex', '0');
+  function startNew(){ recurForm = newRecurForm(); recurDeleteArmed = false; renderRecur(); }
+  add.addEventListener('click', startNew);
+  onActivateKey(add, startNew);
+  list.appendChild(add);
+
+  recurRules.forEach(function(r){
+    var row = recurEl('div', 'recur-item' + (recurForm && recurForm.id === r.id ? ' active' : ''));
+    row.setAttribute('role', 'button');
+    row.setAttribute('tabindex', '0');
+    var name = recurEl('div', 'recur-item-name');
+    name.innerHTML = renderInlineTags(r.text.replace(/</g, '&lt;'));
+    row.appendChild(name);
+    row.appendChild(recurEl('div', 'recur-item-sub', recurSummary(r)));
+    function pick(){ recurForm = JSON.parse(JSON.stringify(r)); recurDeleteArmed = false; renderRecur(); }
+    row.addEventListener('click', pick);
+    onActivateKey(row, pick);
+    list.appendChild(row);
+  });
+  if(!recurRules.length) list.appendChild(recurEl('div', 'recur-empty', '등록된 반복 일정 없음'));
+  body.appendChild(list);
+
+  var side = recurEl('div', 'recur-form-wrap');
+  if(recurForm) side.appendChild(buildRecurForm());
+  else side.appendChild(recurEl('div', 'recur-empty', '목록에서 고르거나 새 반복 일정을 추가'));
+  body.appendChild(side);
+  panel.appendChild(body);
+}
+
+function recurRow(label, content){
+  var row = recurEl('div', 'recur-row');
+  row.appendChild(recurEl('span', 'recur-label', label));
+  var c = recurEl('div', 'recur-field');
+  [].concat(content).forEach(function(x){ c.appendChild(x); });
+  row.appendChild(c);
+  return row;
+}
+
+function recurPills(options, current, onPick){
+  var wrap = recurEl('div', 'recur-pills');
+  options.forEach(function(o){
+    var b = recurEl('span', 'recur-pill' + (String(o[0]) === String(current) ? ' on' : ''), o[1]);
+    b.setAttribute('role', 'button');
+    b.setAttribute('tabindex', '0');
+    function pick(){ onPick(o[0]); }
+    b.addEventListener('click', pick);
+    onActivateKey(b, pick);
+    wrap.appendChild(b);
+  });
+  return wrap;
+}
+
+function recurInput(type, value, cls, onChange){
+  var i = document.createElement('input');
+  i.type = type;
+  i.value = value;
+  i.className = 'recur-input ' + (cls || '');
+  i.autocomplete = 'off';
+  i.spellcheck = false;
+  i.addEventListener('input', function(){ onChange(i.value); });
+  return i;
+}
+
+function buildRecurForm(){
+  var f = recurForm;
+  var box = recurEl('div', 'recur-form');
+
+  var title = recurEl('div', 'recur-form-title', f.id ? '반복 일정 수정' : '새 반복 일정');
+  box.appendChild(title);
+
+  box.appendChild(recurRow('내용', recurInput('text', f.text, 'wide', function(v){ f.text = v; })));
+  box.appendChild(recurRow('주기', recurPills(RECUR_FREQS, f.freq, function(v){ f.freq = v; renderRecur(); })));
+
+  if(f.freq === 'weekly' || f.freq === 'biweekly'){
+    var wd = WEEKDAY_NAMES.map(function(n, i){ return [i, n]; });
+    box.appendChild(recurRow('요일', recurPills(wd, f.weekday, function(v){ f.weekday = v; renderRecur(); })));
+  }
+  if(f.freq === 'monthly'){
+    var sel = document.createElement('select');
+    sel.className = 'recur-input';
+    [1, 2, 3, 4, 6, 12].forEach(function(n){
+      var o = document.createElement('option');
+      o.value = n;
+      o.textContent = n + '개월마다';
+      if(n === f.interval) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.addEventListener('change', function(){ f.interval = parseInt(sel.value, 10); });
+    var dayIn = recurInput('number', f.day, 'num', function(v){ f.day = parseInt(v, 10) || 1; });
+    dayIn.min = 1;
+    dayIn.max = 31;
+    box.appendChild(recurRow('날짜', [sel, dayIn, recurEl('span', 'recur-unit', '일'),
+      recurEl('span', 'recur-hint', '말일을 넘는 달은 말일로 처리함')]));
+  }
+  if(f.freq === 'once'){
+    box.appendChild(recurRow('날짜', recurInput('date', f.start, '', function(v){ f.start = v; })));
+  }
+
+  var time = document.createElement('select');
+  time.className = 'recur-input';
+  var none = document.createElement('option');
+  none.value = '';
+  none.textContent = '없음 (맨 위 시간대)';
+  time.appendChild(none);
+  for(var h = 0; h < 24; h++){
+    var o = document.createElement('option');
+    o.value = pad(h) + ':00';
+    o.textContent = pad(h) + ':00';
+    if(o.value === f.time) o.selected = true;
+    time.appendChild(o);
+  }
+  time.addEventListener('change', function(){ f.time = time.value; });
+  box.appendChild(recurRow('시간', [time, recurEl('span', 'recur-hint', '정하면 로그의 그 시간대에 기록됨')]));
+
+  if(f.freq !== 'once'){
+    box.appendChild(recurRow('기간', [
+      recurInput('date', f.start, '', function(v){ f.start = v; }),
+      recurEl('span', 'recur-unit', '부터'),
+      recurInput('date', f.end, '', function(v){ f.end = v; }),
+      recurEl('span', 'recur-hint', '끝 날짜를 비우면 종료 없음')
+    ]));
+  }
+
+  if(f.id){
+    box.appendChild(recurEl('div', 'recur-next',
+      '다음 회차: ' + (f.next ? dateLabel(f.next) : '없음') + ' · 회차별 날짜는 달력의 ◇에서 변경'));
+  }
+
+  var msg = recurEl('div', 'recur-msg');
+  var foot = recurEl('div', 'recur-foot');
+  if(f.id){
+    var del = recurEl('span', 'recur-del', recurDeleteArmed ? '삭제 확인' : '이 반복 일정 삭제');
+    del.setAttribute('role', 'button');
+    del.setAttribute('tabindex', '0');
+    function doDel(){
+      if(!recurDeleteArmed){ recurDeleteArmed = true; del.textContent = '삭제 확인'; del.classList.add('armed'); return; }
+      api.delete_recurring_rule(f.id).then(function(){ recurForm = null; recurDeleteArmed = false; loadRecur(); refreshAfterRecurChange(); });
+    }
+    del.addEventListener('click', doDel);
+    onActivateKey(del, doDel);
+    if(recurDeleteArmed) del.classList.add('armed');
+    foot.appendChild(del);
+  }
+  var spacer = recurEl('span', 'recur-spacer');
+  foot.appendChild(spacer);
+  var cancel = recurEl('span', 'recur-cancel', '취소');
+  cancel.setAttribute('role', 'button');
+  cancel.setAttribute('tabindex', '0');
+  function doCancel(){ recurForm = null; recurDeleteArmed = false; renderRecur(); }
+  cancel.addEventListener('click', doCancel);
+  onActivateKey(cancel, doCancel);
+  var save = recurEl('span', 'recur-save', '저장');
+  save.setAttribute('role', 'button');
+  save.setAttribute('tabindex', '0');
+  function doSave(){
+    if(!f.text.trim()){ msg.textContent = '내용 입력 필요'; return; }
+    if(f.freq !== 'once' && f.end && f.end < f.start){ msg.textContent = '끝 날짜가 시작 날짜보다 앞임'; return; }
+    if(!f.start){ msg.textContent = '날짜 입력 필요'; return; }
+    api.save_recurring_rule(f).then(function(res){
+      if(!res || !res.ok){ msg.textContent = '저장 실패, 입력 확인 필요'; return; }
+      recurForm = null;
+      recurDeleteArmed = false;
+      loadRecur();
+      refreshAfterRecurChange();
+    });
+  }
+  save.addEventListener('click', doSave);
+  onActivateKey(save, doSave);
+  foot.appendChild(cancel);
+  foot.appendChild(save);
+  box.appendChild(msg);
+  box.appendChild(foot);
+  return box;
+}
+
+document.getElementById('recur-open').addEventListener('click', openRecur);
+onActivateKey(document.getElementById('recur-open'), openRecur);
+
+/* ---- change one occurrence from the calendar ◇ ---- */
+
+var occPopup = null;
+
+function closeOccPopup(){
+  if(occPopup){ occPopup.remove(); occPopup = null; }
+}
+
+function openOccPopup(anchor, day){
+  closeOccPopup();
+  var occs = monthOcc[String(day)] || [];
+  if(!occs.length) return;
+  var pop = recurEl('div', 'occ-pop');
+  occs.forEach(function(o){
+    var block = recurEl('div', 'occ-block');
+    var name = recurEl('div', 'occ-name');
+    name.innerHTML = renderInlineTags(o.text.replace(/</g, '&lt;'));
+    block.appendChild(name);
+    block.appendChild(recurEl('div', 'occ-sub',
+      '이번 회차' + (o.changed ? ' · 변경됨' : '') + ' · 원래 ' + dateLabel(o.orig)));
+    var row = recurEl('div', 'occ-row');
+    var input = document.createElement('input');
+    input.type = 'date';
+    input.className = 'recur-input';
+    input.value = o.date;
+    input.min = todayIso();
+    row.appendChild(input);
+    block.appendChild(row);
+    block.appendChild(recurEl('div', 'occ-hint', '이 회차만 변경됨, 다른 달은 그대로'));
+
+    var btns = recurEl('div', 'occ-btns');
+    if(o.changed){
+      var undo = recurEl('span', 'recur-cancel', '원래대로');
+      undo.setAttribute('role', 'button');
+      undo.addEventListener('click', function(){
+        api.set_occurrence_date(o.ruleId, o.orig, o.orig).then(function(){ closeOccPopup(); refreshAfterRecurChange(); });
+      });
+      btns.appendChild(undo);
+    }
+    var cancel = recurEl('span', 'recur-cancel', '취소');
+    cancel.setAttribute('role', 'button');
+    cancel.addEventListener('click', closeOccPopup);
+    var ok = recurEl('span', 'recur-save', '확정');
+    ok.setAttribute('role', 'button');
+    ok.addEventListener('click', function(){
+      if(!input.value || input.value < todayIso() || input.value === o.date){ closeOccPopup(); return; }
+      api.set_occurrence_date(o.ruleId, o.orig, input.value).then(function(){ closeOccPopup(); refreshAfterRecurChange(); });
+    });
+    btns.appendChild(cancel);
+    btns.appendChild(ok);
+    block.appendChild(btns);
+    pop.appendChild(block);
+  });
+  document.body.appendChild(pop);
+  occPopup = pop;
+  var r = anchor.getBoundingClientRect();
+  var left = Math.max(8, Math.min(r.left - 20, window.innerWidth - pop.offsetWidth - 8));
+  pop.style.left = left + 'px';
+  pop.style.top = (r.bottom + 8) + 'px';
+}
+
+document.addEventListener('mousedown', function(e){
+  if(occPopup && !occPopup.contains(e.target) && !e.target.closest('.plan-mark')) closeOccPopup();
+});
+document.addEventListener('keydown', function(e){
+  if(e.key === 'Escape' && occPopup) closeOccPopup();
+});
 
 })();

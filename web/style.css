@@ -291,3 +291,57 @@ mark.search-hit{ background:#FFE58F; color:inherit; border-radius:2px; padding:0
 .plan-chip:hover{ color:var(--text-accent); border-color:var(--fill-accent); }
 .plan-chip.on{ color:var(--on-accent); background:var(--fill-accent); border-color:var(--fill-accent); }
 .plan-mark{ font-size:10px; line-height:6px; color:var(--fill-accent); }
+
+/* recurring schedules */
+.recur-open{ font-size:12px; color:var(--text-secondary); margin:-4px 0 12px; cursor:pointer; padding:2px 4px; border-radius:6px; align-self:flex-start; }
+.recur-open:hover{ color:var(--text-accent); }
+.recur-open-mark{ color:var(--fill-accent); }
+.plan-mark.plan-click{ cursor:pointer; }
+.plan-mark.plan-click:hover{ font-weight:700; }
+#recur-panel{ padding-bottom:1rem; }
+.recur-head{ display:flex; align-items:center; gap:8px; margin-bottom:14px; }
+.recur-title{ font-size:16px; font-weight:600; }
+.recur-body{ display:flex; gap:18px; align-items:flex-start; }
+.recur-list{ width:240px; flex-shrink:0; display:flex; flex-direction:column; gap:8px; }
+.recur-add{ border:1px dashed var(--border-strong); border-radius:10px; padding:9px 12px; color:var(--text-secondary); font-size:13px; cursor:pointer; text-align:center; }
+.recur-add:hover{ color:var(--text-accent); border-color:var(--fill-accent); }
+.recur-item{ border:1px solid transparent; border-radius:10px; padding:8px 12px; cursor:pointer; }
+.recur-item:hover{ background:var(--surface-hover); }
+.recur-item.active{ border-color:var(--fill-accent); background:rgba(255,255,255,0.5); }
+.recur-item-name{ font-size:13px; }
+.recur-item-sub{ font-size:11.5px; color:var(--text-muted); margin-top:2px; }
+.recur-empty{ font-size:12.5px; color:var(--text-muted); padding:8px 4px; }
+.recur-form-wrap{ flex:1; min-width:0; }
+.recur-form{ border:1px solid var(--border-strong); border-radius:14px; padding:14px 18px 12px; background:rgba(255,255,255,0.45); }
+.recur-form-title{ font-size:14px; font-weight:600; margin-bottom:12px; }
+.recur-row{ display:flex; align-items:flex-start; gap:10px; margin-bottom:10px; }
+.recur-label{ width:36px; flex-shrink:0; font-size:12.5px; color:var(--text-secondary); padding-top:5px; }
+.recur-field{ flex:1; min-width:0; display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.recur-input{ font-size:13px; font-family:var(--font-sans); color:var(--text-primary); background:transparent; border:none; border-bottom:1px solid var(--border-strong); padding:3px 2px; outline:none; min-width:0; }
+.recur-input:focus{ border-bottom-color:var(--fill-accent); }
+.recur-input.wide{ width:100%; }
+.recur-input.num{ width:44px; text-align:center; }
+select.recur-input{ cursor:pointer; }
+.recur-unit{ font-size:12.5px; color:var(--text-secondary); }
+.recur-hint{ font-size:11.5px; color:var(--text-muted); }
+.recur-pills{ display:flex; flex-wrap:wrap; gap:6px; }
+.recur-pill{ font-size:12.5px; padding:2px 11px; border-radius:999px; color:var(--text-secondary); cursor:pointer; }
+.recur-pill:hover{ background:var(--surface-hover); }
+.recur-pill.on{ background:var(--fill-accent); color:var(--on-accent); }
+.recur-next{ font-size:12px; color:var(--text-muted); border-top:1px solid var(--border); padding-top:10px; margin-top:4px; }
+.recur-msg{ font-size:12px; color:#b3261e; min-height:16px; margin-top:6px; }
+.recur-foot{ display:flex; align-items:center; gap:14px; margin-top:6px; }
+.recur-spacer{ flex:1; }
+.recur-del{ font-size:12px; color:var(--text-muted); cursor:pointer; }
+.recur-del:hover, .recur-del.armed{ color:#b3261e; }
+.recur-cancel{ font-size:12.5px; color:var(--text-secondary); cursor:pointer; padding:3px 6px; }
+.recur-cancel:hover{ color:var(--text-primary); }
+.recur-save{ font-size:12.5px; background:var(--fill-accent); color:var(--on-accent); border-radius:999px; padding:4px 16px; cursor:pointer; }
+.occ-pop{ position:fixed; z-index:50; width:250px; background:#fff; border:1px solid var(--border-strong); border-radius:12px; box-shadow:0 8px 24px rgba(30,40,60,0.18); padding:12px 14px; font-size:12.5px; }
+.occ-block + .occ-block{ border-top:1px solid var(--border); margin-top:10px; padding-top:10px; }
+.occ-name{ font-size:13px; font-weight:600; }
+.occ-sub{ font-size:11.5px; color:var(--text-muted); margin:2px 0 8px; }
+.occ-row{ display:flex; }
+.occ-row .recur-input{ width:100%; }
+.occ-hint{ font-size:11.5px; color:var(--text-muted); margin-top:6px; }
+.occ-btns{ display:flex; justify-content:flex-end; align-items:center; gap:6px; margin-top:10px; }

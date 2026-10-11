@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Daylog</title>
-<link rel="stylesheet" href="style.css?v=33">
+<link rel="stylesheet" href="style.css?v=34">
 </head>
 <body>
 
@@ -26,6 +26,7 @@
     </div>
 
     <div id="cal-grid"></div>
+    <div class="recur-open" id="recur-open" role="button" tabindex="0"><span class="recur-open-mark">◇</span> 반복 일정</div>
 
     <div class="next-panel">
       <div class="next-panel-header">
@@ -85,6 +86,7 @@
     </div>
 
     <div id="search-results" style="display:none;"></div>
+    <div id="recur-panel" style="display:none;"></div>
 
     <div class="acc-section open" data-name="log">
       <div class="acc-header" role="button" tabindex="0" aria-expanded="true">
@@ -135,6 +137,6 @@
 
 <div id="save-toast" class="save-toast">저장됨</div>
 
-<script src="app.js?v=43"></script>
+<script src="app.js?v=44"></script>
 </body>
 </html>

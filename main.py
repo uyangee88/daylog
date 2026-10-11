@@ -3,6 +3,7 @@ import ctypes
 import json
 import re
 import threading
+import uuid
 from ctypes import wintypes
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -243,6 +244,189 @@ def edit_timer_file(index, key, rebuild):
         p.write_text("\n".join(lines), encoding="utf-8")
 
 
+# ---- recurring schedules -------------------------------------------------
+# recurring.json: {"rules": [rule, ...]}. A rule:
+#   id, text, freq ("once"|"daily"|"weekdays"|"weekly"|"biweekly"|"monthly"),
+#   weekday (0=Sun..6, weekly/biweekly), interval (months) + day (monthly),
+#   time ("HH:00" or ""), start/end ("YYYY-MM-DD", end may be ""),
+#   created (first day it may write into a log),
+#   overrides {original date: moved date} (one occurrence moved to another day),
+#   filled [original dates already written into a log].
+# An occurrence is identified by its original date.
+
+RECUR_FREQS = ("once", "daily", "weekdays", "weekly", "biweekly", "monthly")
+RECUR_FILL_CAP = 400  # most occurrences one rule may back-fill in a single pass
+
+
+def recurring_path():
+    return DATA_DIR / "recurring.json"
+
+
+def _d(text):
+    return date.fromisoformat(text)
+
+
+def load_recurring():
+    p = recurring_path()
+    if not p.exists():
+        return []
+    try:
+        with _lock:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        return [r for r in data.get("rules", []) if isinstance(r, dict) and r.get("id")]
+    except Exception:
+        return []
+
+
+def save_recurring(rules):
+    with _lock:
+        recurring_path().write_text(
+            json.dumps({"rules": rules}, ensure_ascii=False, indent=1), encoding="utf-8"
+        )
+
+
+def _generated_dates(rule, lo, hi):
+    """Original occurrence dates of a rule within [lo, hi] (dates), ignoring moves."""
+    freq = rule.get("freq")
+    start = _d(rule["start"])
+    end = _d(rule["end"]) if rule.get("end") else None
+    lo = max(lo, start)
+    if end:
+        hi = min(hi, end)
+    if lo > hi:
+        return []
+    if freq == "once":
+        return [start] if lo <= start <= hi else []
+    out = []
+    if freq == "monthly":
+        interval = max(1, int(rule.get("interval") or 1))
+        day = min(31, max(1, int(rule.get("day") or 1)))
+        y, m = lo.year, lo.month
+        while (y, m) <= (hi.year, hi.month):
+            if ((y - start.year) * 12 + (m - start.month)) % interval == 0:
+                d = date(y, m, min(day, calendar.monthrange(y, m)[1]))
+                if lo <= d <= hi:
+                    out.append(d)
+            m += 1
+            if m > 12:
+                y, m = y + 1, 1
+        return out
+    weekday = int(rule.get("weekday") or 0)
+    week0 = start - timedelta(days=(start.weekday() + 1) % 7)  # Sunday of the start week
+    d = lo
+    while d <= hi:
+        js = (d.weekday() + 1) % 7
+        ok = (
+            freq == "daily"
+            or (freq == "weekdays" and 1 <= js <= 5)
+            or (freq == "weekly" and js == weekday)
+            or (freq == "biweekly" and js == weekday and ((d - week0).days // 7) % 2 == 0)
+        )
+        if ok:
+            out.append(d)
+        d += timedelta(days=1)
+    return out
+
+
+def rule_occurrences(rule, lo, hi):
+    """[(original_date, actual_date)] whose actual date falls within [lo, hi]."""
+    moves = rule.get("overrides") or {}
+    out = []
+    for d in _generated_dates(rule, lo, hi):
+        if d.isoformat() not in moves:
+            out.append((d, d))
+    for orig, new in moves.items():
+        try:
+            o, n = _d(orig), _d(new)
+        except ValueError:
+            continue
+        if lo <= n <= hi:
+            out.append((o, n))
+    return sorted(out, key=lambda t: t[1])
+
+
+_fill_lock = threading.Lock()
+
+
+def fill_due_recurring():
+    """Write every occurrence whose day has arrived into that day's log (once)."""
+    # get_day and get_month_tags run on separate threads at startup; without this
+    # both could write the same occurrence.
+    with _fill_lock:
+        _fill_due_locked()
+
+
+def _fill_due_locked():
+    rules = load_recurring()
+    if not rules:
+        return
+    today = date.today()
+    changed = False
+    for rule in rules:
+        try:
+            filled = set(rule.get("filled") or [])
+            since = max(_d(rule.get("created") or rule["start"]), _d(rule["start"]))
+            due = [
+                (o, n) for o, n in rule_occurrences(rule, since, today)
+                if o.isoformat() not in filled
+            ][:RECUR_FILL_CAP]
+        except (KeyError, ValueError):
+            continue
+        for orig, actual in due:
+            p = day_path(actual.isoformat())
+            with _lock:
+                data = parse_day(p.read_text(encoding="utf-8")) if p.exists() else {"entries": [], "focus": None, "mood": None}
+                hour = rule.get("time") or (data["entries"][0]["hour"] if data["entries"] else "09:00")
+                group = next((g for g in data["entries"] if g["hour"] == hour), None)
+                if group is None:
+                    group = {"hour": hour, "items": []}
+                    data["entries"].append(group)
+                    data["entries"].sort(key=lambda g: g["hour"])
+                group["items"].append(rule["text"])
+                p.write_text(
+                    serialize_day(actual.isoformat(), data["entries"], data["focus"], data["mood"]),
+                    encoding="utf-8",
+                )
+            filled.add(orig.isoformat())
+            changed = True
+        rule["filled"] = sorted(filled)
+    if changed:
+        save_recurring(rules)
+
+
+def _clean_rule(raw, old=None):
+    """Validate a rule coming from the UI; returns the stored form or None."""
+    text = " ".join(str(raw.get("text") or "").split())
+    freq = raw.get("freq")
+    if not text or freq not in RECUR_FREQS:
+        return None
+    try:
+        start = _d(str(raw.get("start") or date.today().isoformat())).isoformat()
+        end = _d(str(raw["end"])).isoformat() if raw.get("end") else ""
+    except ValueError:
+        return None
+    if end and end < start:
+        return None
+    time = str(raw.get("time") or "")
+    if time and not re.match(r"^\d{2}:00$", time):
+        time = ""
+    rule = {
+        "id": (old or {}).get("id") or raw.get("id") or "",
+        "text": text,
+        "freq": freq,
+        "weekday": min(6, max(0, int(raw.get("weekday") or 0))),
+        "interval": min(12, max(1, int(raw.get("interval") or 1))),
+        "day": min(31, max(1, int(raw.get("day") or 1))),
+        "time": time,
+        "start": start,
+        "end": end if freq != "once" else "",
+        "created": (old or {}).get("created") or date.today().isoformat(),
+        "overrides": (old or {}).get("overrides") or {},
+        "filled": (old or {}).get("filled") or [],
+    }
+    return rule
+
+
 class Api:
     def __init__(self):
         # underscore prefix: pywebview walks every public attribute of this object
@@ -256,7 +440,94 @@ class Api:
     def set_window(self, window):
         self._window = window
 
+    # ---- recurring schedules ----
+
+    def list_recurring(self):
+        fill_due_recurring()
+        today = date.today()
+        rules = load_recurring()
+        out = []
+        for r in rules:
+            item = dict(r)
+            try:
+                nxt = rule_occurrences(r, today, today + timedelta(days=800))
+                filled = set(r.get("filled") or [])
+                nxt = [n for o, n in nxt if o.isoformat() not in filled]
+                item["next"] = nxt[0].isoformat() if nxt else None
+            except (KeyError, ValueError):
+                item["next"] = None
+            out.append(item)
+        return out
+
+    def save_recurring_rule(self, raw):
+        rules = load_recurring()
+        old = next((r for r in rules if r["id"] == raw.get("id")), None)
+        rule = _clean_rule(raw, old)
+        if rule is None:
+            return {"ok": False}
+        if old is None:
+            rule["id"] = uuid.uuid4().hex[:8]
+            rules.append(rule)
+        else:
+            rules[rules.index(old)] = rule
+        save_recurring(rules)
+        fill_due_recurring()
+        return {"ok": True, "id": rule["id"]}
+
+    def delete_recurring_rule(self, rule_id):
+        rules = [r for r in load_recurring() if r["id"] != rule_id]
+        save_recurring(rules)
+        return {"ok": True}
+
+    def get_month_occurrences(self, year, month):
+        """Upcoming (not yet written) occurrences whose actual day is in the month."""
+        fill_due_recurring()
+        lo = date(year, month, 1)
+        hi = date(year, month, calendar.monthrange(year, month)[1])
+        out = []
+        for r in load_recurring():
+            filled = set(r.get("filled") or [])
+            try:
+                for orig, actual in rule_occurrences(r, lo, hi):
+                    if orig.isoformat() in filled:
+                        continue
+                    out.append(
+                        {
+                            "ruleId": r["id"],
+                            "text": r["text"],
+                            "orig": orig.isoformat(),
+                            "date": actual.isoformat(),
+                            "changed": orig != actual,
+                        }
+                    )
+            except (KeyError, ValueError):
+                continue
+        return out
+
+    def set_occurrence_date(self, rule_id, orig, new_date):
+        """Move one occurrence to another day (new_date == orig undoes the move)."""
+        try:
+            o, n = _d(orig), _d(new_date)
+        except ValueError:
+            return {"ok": False}
+        if n < date.today():
+            return {"ok": False}
+        rules = load_recurring()
+        for r in rules:
+            if r["id"] != rule_id or orig in (r.get("filled") or []):
+                continue
+            moves = r.setdefault("overrides", {})
+            if o == n:
+                moves.pop(orig, None)
+            else:
+                moves[orig] = n.isoformat()
+            save_recurring(rules)
+            fill_due_recurring()
+            return {"ok": True}
+        return {"ok": False}
+
     def get_day(self, date_str):
+        fill_due_recurring()
         p = day_path(date_str)
         if not p.exists():
             return {"entries": [], "focus": None, "mood": None}
@@ -279,6 +550,7 @@ class Api:
         return {"ok": True}
 
     def get_month_tags(self, year, month):
+        fill_due_recurring()
         days_in_month = calendar.monthrange(year, month)[1]
         result = {}
         for d in range(1, days_in_month + 1):
