@@ -1,0 +1,140 @@
+﻿<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Daylog</title>
+<link rel="stylesheet" href="style.css?v=30">
+</head>
+<body>
+
+<div id="app">
+
+  <div id="sidebar">
+    <div class="cal-header">
+      <div class="nav-arrow" role="button" tabindex="0" id="prev-month" aria-label="이전 달">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+      </div>
+      <span id="cal-title" style="font-size:14px; font-weight:600;"></span>
+      <div class="nav-arrow" role="button" tabindex="0" id="next-month" aria-label="다음 달">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+      </div>
+    </div>
+
+    <div class="weekday-row">
+      <div>일</div><div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div>토</div>
+    </div>
+
+    <div id="cal-grid"></div>
+
+    <div class="next-panel">
+      <div class="next-panel-header">
+        <span>next</span>
+        <span class="next-legend">○ start ─ ● done</span>
+      </div>
+      <div id="next-list"></div>
+      <div class="next-add-row">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        <input type="text" id="next-input" placeholder="할 일 추가 후 Enter">
+      </div>
+    </div>
+  </div>
+
+  <div id="main">
+    <div class="main-header">
+      <div class="main-header-left" id="normal-header-left">
+        <span id="selected-date-label" style="font-size:16px; font-weight:600;"></span>
+      </div>
+      <div class="main-header-left" id="search-header-left" style="display:none;">
+        <div class="menu-trigger" role="button" tabindex="0" id="search-close-btn" aria-label="검색 닫기">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </div>
+        <input type="text" id="search-input" placeholder="기록·할 일 검색  (#태그)" autocomplete="off" spellcheck="false">
+      </div>
+
+      <div style="position:relative; display:flex; align-items:center; gap:2px;" id="normal-header-right">
+        <div class="menu-trigger" role="button" tabindex="0" id="search-open-btn" aria-label="검색 (Ctrl+F)" title="검색 (Ctrl+F)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.5" y2="16.5"></line></svg>
+        </div>
+        <div class="menu-trigger" role="button" tabindex="0" id="menu-trigger" aria-label="더보기" aria-haspopup="true" aria-expanded="false">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>
+        </div>
+        <div class="menu-dropdown" id="export-menu">
+          <div class="menu-item" role="button" tabindex="0" id="export-item">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            <span>이번 달 내보내기 (.md)</span>
+          </div>
+        </div>
+      </div>
+      <div id="search-header-right" style="display:none; align-items:center; gap:16px;">
+        <div id="period-toggle" style="display:flex; gap:4px;">
+          <div class="period-btn" role="button" tabindex="0" data-period="week">주</div>
+          <div class="period-btn" role="button" tabindex="0" data-period="month">월</div>
+          <div class="period-btn" role="button" tabindex="0" data-period="all">전체</div>
+        </div>
+        <div id="search-nav" style="display:flex; align-items:center; gap:4px;">
+          <div class="nav-arrow" role="button" tabindex="0" id="search-prev" aria-label="이전 기간">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+          </div>
+          <span id="search-range-label" style="font-size:13px; color:var(--text-secondary); white-space:nowrap;"></span>
+          <div class="nav-arrow" role="button" tabindex="0" id="search-next" aria-label="다음 기간">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="search-results" style="display:none;"></div>
+
+    <div class="acc-section open" data-name="log">
+      <div class="acc-header" role="button" tabindex="0" aria-expanded="true">
+        <svg class="acc-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+        <span>log</span>
+      </div>
+      <div class="acc-body">
+        <div id="entry-list"></div>
+        <div class="add-hour-row" id="add-hour-row">
+          <select id="add-hour-select"></select>
+        </div>
+      </div>
+    </div>
+
+    <div class="acc-section" data-name="status">
+      <div class="acc-header" role="button" tabindex="0" aria-expanded="false">
+        <svg class="acc-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+        <span>status</span>
+      </div>
+      <div class="acc-body">
+        <div class="status-row">
+          <span class="status-label">focus</span>
+          <div class="status-btn" role="button" tabindex="0" data-group="focus" data-value="bad">bad</div>
+          <div class="status-btn" role="button" tabindex="0" data-group="focus" data-value="not bad">not bad</div>
+          <div class="status-btn" role="button" tabindex="0" data-group="focus" data-value="good">good</div>
+        </div>
+        <div class="status-row">
+          <span class="status-label">mood</span>
+          <div class="status-btn" role="button" tabindex="0" data-group="mood" data-value="bad">bad</div>
+          <div class="status-btn" role="button" tabindex="0" data-group="mood" data-value="not bad">not bad</div>
+          <div class="status-btn" role="button" tabindex="0" data-group="mood" data-value="good">good</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="acc-section" data-name="timer">
+      <div class="acc-header" role="button" tabindex="0" aria-expanded="false">
+        <svg class="acc-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+        <span>timer</span>
+      </div>
+      <div class="acc-body">
+        <div id="timer-body"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div id="save-toast" class="save-toast">저장됨</div>
+
+<script src="app.js?v=38"></script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+venv/
+.webview_data/
+__pycache__/
+*.pyc
+console_out.log
+console_err.log
