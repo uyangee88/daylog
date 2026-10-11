@@ -271,15 +271,15 @@ function renderInlineTags(text){
 }
 var PLAN_PREFIX = '[예정] ';
 
-// dateIso: the day this entry belongs to; the "예정" badge shows only until
-// that day has passed.
+// dateIso: the day this entry belongs to; the ◇ mark (same as the calendar's)
+// shows only until that day has passed. It hangs in the left gutter so it
+// doesn't disturb the tag-column alignment.
 function renderEntryContent(text, dateIso){
   var planned = text.indexOf(PLAN_PREFIX) === 0;
   if(planned) text = text.slice(PLAN_PREFIX.length);
-  var badge = (planned && (dateIso || selectedDate) >= todayIso()) ? '<span class="plan-badge">예정</span>' : '';
+  var mark = (planned && (dateIso || selectedDate) >= todayIso()) ? '<span class="plan-diamond" title="예정">◇</span>' : '';
   var lines = text.split('\n');
-  return lines.map(function(line, lineIdx){
-    var tail = lineIdx === 0 ? badge : '';
+  return mark + lines.map(function(line){
     // IME composition can occasionally leave stray leading whitespace on a
     // line; strip it before testing so a leading #tag still gets detected.
     line = line.replace(/^[ \t]+/, '');
@@ -289,10 +289,10 @@ function renderEntryContent(text, dateIso){
       var rest = line.slice(leadMatch[0].length);
       var c = tagColor(tagName);
       var pillHtml = '<span class="tag-slot"><span class="tag-pill-inline" data-tag="'+tagName+'" style="background:'+c.bg+'; color:'+c.text+'">#'+tagName+'</span></span>';
-      var restHtml = '<span class="rest-text">' + renderInlineTags(rest) + tail + '</span>';
+      var restHtml = '<span class="rest-text">' + renderInlineTags(rest) + '</span>';
       return '<div class="tagged-line">' + pillHtml + restHtml + '</div>';
     }
-    return '<div class="plain-line">' + renderInlineTags(line) + tail + '</div>';
+    return '<div class="plain-line">' + renderInlineTags(line) + '</div>';
   }).join('');
 }
 function extractTags(text){
