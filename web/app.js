@@ -992,16 +992,12 @@ function buildEntryItemEl(g, itemText, idx){
   return contentEl;
 }
 
-var planHour = null;      // hour group whose new line starts in 예정 mode (set when added via the 예정 toggle)
 
 function renderEntries(){
   var list = document.getElementById('entry-list');
   list.innerHTML = '';
   // 예정 only makes sense from today on
   var pastDay = selectedDate < todayIso();
-  var planToggleEl = document.getElementById('plan-toggle');
-  planToggleEl.style.display = pastDay ? 'none' : '';
-  if(pastDay) planToggleEl.classList.remove('on');
 
   dayData.entries.forEach(function(g){
     var block = document.createElement('div');
@@ -1020,10 +1016,7 @@ function renderEntries(){
     chip.className = 'plan-chip';
     chip.textContent = '예정';
     chip.title = '예정으로 입력';
-    if(!pastDay && g.hour === planHour){
-      slot.setAttribute('data-plan', '1');
-      chip.classList.add('on');
-    }
+
     // keep focus in the line being typed
     chip.addEventListener('mousedown', function(e){ e.preventDefault(); });
     chip.addEventListener('click', function(){
@@ -1094,16 +1087,11 @@ document.getElementById('add-hour-select').addEventListener('change', function()
   var group = {hour: hour, items: []};
   dayData.entries.push(group);
   dayData.entries.sort(function(a,b){ return a.hour.localeCompare(b.hour); });
-  var planToggle = document.getElementById('plan-toggle');
-  planHour = planToggle.classList.contains('on') ? hour : null;
-  planToggle.classList.remove('on');
   renderEntries();
-  planHour = null;
   var slot = document.querySelector('.live-slot[data-hour="'+hour+'"]');
   if(slot) slot.focus();
 });
-document.getElementById('plan-toggle').addEventListener('click', function(){ this.classList.toggle('on'); });
-onActivateKey(document.getElementById('plan-toggle'), function(){ document.getElementById('plan-toggle').click(); });
+
 
 /* ---------------- search: text, #tag, and next items ---------------- */
 
