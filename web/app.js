@@ -742,6 +742,7 @@ function editNextItem(textEl, idx, currentText, clickEvent){
     textEl.classList.remove('editing');
     textEl.removeEventListener('keydown', onKey);
     textEl.removeEventListener('blur', commit);
+    offEnter();
   }
   function commit(){
     if(settled) return;
@@ -759,33 +760,28 @@ function editNextItem(textEl, idx, currentText, clickEvent){
   }
   function onKey(e){
     if(e.isComposing || e.keyCode === 229) return;
-    if(e.key === 'Enter'){
-      e.preventDefault();
-      commit();
-    } else if(e.key === 'Escape'){
+    if(e.key === 'Escape'){
       e.preventDefault();
       settled = true;
       finish();
       textEl.textContent = currentText;
     }
   }
+  var offEnter = onEnter(textEl, commit);
   textEl.addEventListener('keydown', onKey);
   textEl.addEventListener('blur', commit);
 }
 
 var nextInput = document.getElementById('next-input');
-nextInput.addEventListener('keydown', function(e){
-  if(e.key === 'Enter' && e.keyCode !== 229){
-    e.preventDefault();
-    var text = nextInput.value.trim();
-    if(!text) return;
-    api.add_next(text).then(function(items){
-      nextItems = items;
-      renderNextList();
-      renderCalendar();
-    });
-    nextInput.value = '';
-  }
+onEnter(nextInput, function(){
+  var text = nextInput.value.trim();
+  if(!text) return;
+  api.add_next(text).then(function(items){
+    nextItems = items;
+    renderNextList();
+    renderCalendar();
+  });
+  nextInput.value = '';
 });
 
 /* ---------------- log entries ---------------- */
@@ -1352,8 +1348,8 @@ searchInput.addEventListener('input', function(){
 searchInput.addEventListener('keydown', function(e){
   if(e.isComposing || e.keyCode === 229) return;
   if(e.key === 'Escape'){ e.preventDefault(); closeSearch(); }
-  else if(e.key === 'Enter'){ e.preventDefault(); runSearch(); }
 });
+onEnter(searchInput, runSearch);
 
 document.getElementById('search-open-btn').addEventListener('click', function(){ openSearch('', 'all'); });
 onActivateKey(document.getElementById('search-open-btn'), function(){ openSearch('', 'all'); });
@@ -1757,10 +1753,7 @@ function renderTimer(){
       input.placeholder = '기록할 이름을 쓰고 Enter  (예: 자리 비움, 점심)';
       input.autocomplete = 'off';
       input.spellcheck = false;
-      input.addEventListener('keydown', function(e){
-        if(e.isComposing || e.keyCode === 229) return;
-        if(e.key === 'Enter'){ e.preventDefault(); startTimer(input.value); }
-      });
+      onEnter(input, function(){ startTimer(input.value); });
       var start = document.createElement('div');
       start.className = 'tm-btn start';
       start.setAttribute('role', 'button');
@@ -1837,10 +1830,10 @@ function editTimerRange(span, r){
     }
     renderTimer();
   }
+  onEnter(input, function(){ finish(true); });
   input.addEventListener('keydown', function(e){
     if(e.isComposing || e.keyCode === 229) return;
-    if(e.key === 'Enter'){ e.preventDefault(); finish(true); }
-    else if(e.key === 'Escape'){ e.preventDefault(); finish(false); }
+    if(e.key === 'Escape'){ e.preventDefault(); finish(false); }
   });
   input.addEventListener('blur', function(){ finish(true); });
 }
@@ -1858,10 +1851,10 @@ function editTimerName(el, r){
     if(commit && name && name !== r.name){ saveTimerEdit(r, null, null, name); return; }
     renderTimer();
   }
+  onEnter(el, function(){ finish(true); });
   el.addEventListener('keydown', function(e){
     if(e.isComposing || e.keyCode === 229) return;
-    if(e.key === 'Enter'){ e.preventDefault(); finish(true); }
-    else if(e.key === 'Escape'){ e.preventDefault(); finish(false); }
+    if(e.key === 'Escape'){ e.preventDefault(); finish(false); }
   });
   el.addEventListener('blur', function(){ finish(true); });
 }
