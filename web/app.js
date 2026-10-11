@@ -997,6 +997,11 @@ var planHour = null;      // hour group whose new line starts in 예정 mode (se
 function renderEntries(){
   var list = document.getElementById('entry-list');
   list.innerHTML = '';
+  // 예정 only makes sense from today on
+  var pastDay = selectedDate < todayIso();
+  var planToggleEl = document.getElementById('plan-toggle');
+  planToggleEl.style.display = pastDay ? 'none' : '';
+  if(pastDay) planToggleEl.classList.remove('on');
 
   dayData.entries.forEach(function(g){
     var block = document.createElement('div');
@@ -1015,7 +1020,7 @@ function renderEntries(){
     chip.className = 'plan-chip';
     chip.textContent = '예정';
     chip.title = '예정으로 입력';
-    if(g.hour === planHour){
+    if(!pastDay && g.hour === planHour){
       slot.setAttribute('data-plan', '1');
       chip.classList.add('on');
     }
@@ -1028,7 +1033,7 @@ function renderEntries(){
       slot.focus();
     });
     block.appendChild(slot);
-    block.appendChild(chip);
+    if(!pastDay) block.appendChild(chip);
     list.appendChild(block);
   });
 
