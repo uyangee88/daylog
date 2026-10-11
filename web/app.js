@@ -269,9 +269,17 @@ function renderInlineTags(text){
     return '<span class="tag-pill-inline" data-tag="'+name+'" style="background:'+c.bg+'; color:'+c.text+'">#'+name+'</span>';
   });
 }
-function renderEntryContent(text){
+var PLAN_PREFIX = '[예정] ';
+
+// dateIso: the day this entry belongs to; the "예정" badge shows only until
+// that day has passed.
+function renderEntryContent(text, dateIso){
+  var planned = text.indexOf(PLAN_PREFIX) === 0;
+  if(planned) text = text.slice(PLAN_PREFIX.length);
+  var badge = (planned && (dateIso || selectedDate) >= todayIso()) ? '<span class="plan-badge">예정</span>' : '';
   var lines = text.split('\n');
-  return lines.map(function(line){
+  return lines.map(function(line, lineIdx){
+    var tail = lineIdx === 0 ? badge : '';
     // IME composition can occasionally leave stray leading whitespace on a
     // line; strip it before testing so a leading #tag still gets detected.
     line = line.replace(/^[ \t]+/, '');
@@ -281,10 +289,10 @@ function renderEntryContent(text){
       var rest = line.slice(leadMatch[0].length);
       var c = tagColor(tagName);
       var pillHtml = '<span class="tag-slot"><span class="tag-pill-inline" data-tag="'+tagName+'" style="background:'+c.bg+'; color:'+c.text+'">#'+tagName+'</span></span>';
-      var restHtml = '<span class="rest-text">' + renderInlineTags(rest) + '</span>';
+      var restHtml = '<span class="rest-text">' + renderInlineTags(rest) + tail + '</span>';
       return '<div class="tagged-line">' + pillHtml + restHtml + '</div>';
     }
-    return '<div class="plain-line">' + renderInlineTags(line) + '</div>';
+    return '<div class="plain-line">' + renderInlineTags(line) + tail + '</div>';
   }).join('');
 }
 function extractTags(text){
@@ -302,6 +310,7 @@ var api = null;
 var viewYear, viewMonth;
 var selectedDate = todayIso();
 var monthTags = {};       // { "9": ["tag1","tag2"] }
+var monthPlans = {};      // { "12": true } days holding an entry marked 예정
 var nextItems = [];       // [{done,text,added,doneDate}]
 var dayData = { entries: [], focus: null, mood: null };
 var saveTimer = null;
@@ -340,6 +349,10 @@ function updateMonthTagsLocally(dateStr, entries){
   var day = d.getDate();
   if(seen.length){ monthTags[String(day)] = seen.slice(0,4); }
   else { delete monthTags[String(day)]; }
+  var hasPlan = entries.some(function(g){
+    return g.items.some(function(it){ return it.indexOf(PLAN_PREFIX) === 0; });
+  });
+  if(hasPlan) monthPlans[String(day)] = true; else delete monthPlans[String(day)];
   renderCalendarDots();
 }
 
@@ -351,10 +364,13 @@ function loadMonth(){
   document.getElementById('cal-title').textContent = viewYear + '년 ' + viewMonth + '월';
   Promise.all([
     api.get_month_tags(viewYear, viewMonth),
-    api.get_next_list()
+    api.get_next_list(),
+    api.get_month_plans(viewYear, viewMonth)
   ]).then(function(results){
     monthTags = results[0] || {};
     nextItems = results[1] || [];
+    monthPlans = {};
+    (results[2] || []).forEach(function(d){ monthPlans[String(d)] = true; });
     renderCalendar();
     renderNextList();
   });
@@ -519,6 +535,14 @@ function fillDotRow(row, day){
     dot.style.background = tagColor(tag).dot;
     row.appendChild(dot);
   });
+  // ◇ = something planned for a day that hasn't passed yet
+  var dateStr = viewYear+'-'+pad(viewMonth)+'-'+pad(day);
+  if(monthPlans[String(day)] && dateStr >= todayIso()){
+    var mark = document.createElement('span');
+    mark.className = 'plan-mark';
+    mark.textContent = '◇';
+    row.appendChild(mark);
+  }
 }
 
 function renderCalendarDots(){
@@ -804,11 +828,13 @@ function makeLiveSlot(group){
   div.addEventListener('compositionstart', function(){ composing = true; });
   div.addEventListener('compositionend', function(){ composing = false; });
 
+  function planned(text){ return div.getAttribute('data-plan') === '1' ? PLAN_PREFIX + text : text; }
+
   function commitAndContinue(){
     var text = contentEditableToText(div).trim();
     if(!text) return;
     settled = true;
-    group.items.push(text);
+    group.items.push(planned(text));
     renderEntries();
     scheduleSave();
     var fresh = document.querySelector('.live-slot[data-hour="'+group.hour+'"]');
@@ -840,7 +866,7 @@ function makeLiveSlot(group){
     // would tear out whatever element focus is moving to (e.g. during
     // arrow-key navigation into another entry) before it finishes focusing.
     if(!text) return;
-    group.items.push(text);
+    group.items.push(planned(text));
     renderEntries();
     scheduleSave();
   });
@@ -953,7 +979,7 @@ function buildEntryItemEl(g, itemText, idx){
   contentEl.className = 'entry-item';
   contentEl.setAttribute('data-hour', g.hour);
   contentEl.setAttribute('data-idx', idx);
-  contentEl.innerHTML = renderEntryContent(itemText);
+  contentEl.innerHTML = renderEntryContent(itemText, selectedDate);
   contentEl.addEventListener('click', function(e){
     var pill = e.target.closest('.tag-pill-inline');
     if(pill && pill.hasAttribute('data-tag')){
@@ -965,6 +991,8 @@ function buildEntryItemEl(g, itemText, idx){
   });
   return contentEl;
 }
+
+var planHour = null;      // hour group whose new line starts in 예정 mode (set when added via the 예정 toggle)
 
 function renderEntries(){
   var list = document.getElementById('entry-list');
@@ -982,7 +1010,25 @@ function renderEntries(){
       block.appendChild(buildEntryItemEl(g, itemText, idx));
     });
 
-    block.appendChild(makeLiveSlot(g));
+    var slot = makeLiveSlot(g);
+    var chip = document.createElement('span');
+    chip.className = 'plan-chip';
+    chip.textContent = '예정';
+    chip.title = '예정으로 입력';
+    if(g.hour === planHour){
+      slot.setAttribute('data-plan', '1');
+      chip.classList.add('on');
+    }
+    // keep focus in the line being typed
+    chip.addEventListener('mousedown', function(e){ e.preventDefault(); });
+    chip.addEventListener('click', function(){
+      var on = slot.getAttribute('data-plan') === '1';
+      if(on) slot.removeAttribute('data-plan'); else slot.setAttribute('data-plan', '1');
+      chip.classList.toggle('on', !on);
+      slot.focus();
+    });
+    block.appendChild(slot);
+    block.appendChild(chip);
     list.appendChild(block);
   });
 
@@ -1043,10 +1089,16 @@ document.getElementById('add-hour-select').addEventListener('change', function()
   var group = {hour: hour, items: []};
   dayData.entries.push(group);
   dayData.entries.sort(function(a,b){ return a.hour.localeCompare(b.hour); });
+  var planToggle = document.getElementById('plan-toggle');
+  planHour = planToggle.classList.contains('on') ? hour : null;
+  planToggle.classList.remove('on');
   renderEntries();
+  planHour = null;
   var slot = document.querySelector('.live-slot[data-hour="'+hour+'"]');
   if(slot) slot.focus();
 });
+document.getElementById('plan-toggle').addEventListener('click', function(){ this.classList.toggle('on'); });
+onActivateKey(document.getElementById('plan-toggle'), function(){ document.getElementById('plan-toggle').click(); });
 
 /* ---------------- search: text, #tag, and next items ---------------- */
 
@@ -1312,7 +1364,7 @@ function renderSearchResults(res, parsed){
     byDate[dateStr].forEach(function(m){
       var item = document.createElement('div');
       item.className = 'entry-item';
-      item.innerHTML = renderEntryContent(m.text);
+      item.innerHTML = renderEntryContent(m.text, dateStr);
       hl(item);
       item.addEventListener('click', function(e){
         var pill = e.target.closest('.tag-pill-inline');

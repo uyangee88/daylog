@@ -47,6 +47,8 @@ NEXT_RE = re.compile(
     r"^- \[( |x)\] (.*?) \(added: (\d{4}-\d{2}-\d{2})(?:, done: (\d{4}-\d{2}-\d{2}))?(?:, note: (.*))?\)\s*$"
 )
 TAG_RE = re.compile(r"#([\w가-힣]+)")
+# Log entries typed as planned (future) work start with this marker.
+PLAN_PREFIX = "[예정] "
 DAY_FILE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.md$")
 TIMER_LINE_RE = re.compile(
     r"^- (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}) ~ (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}) \| (.*)$"
@@ -294,6 +296,19 @@ class Api:
             if seen:
                 result[str(d)] = seen[:4]
         return result
+
+    def get_month_plans(self, year, month):
+        """Days of the month that contain at least one entry marked "[예정]"."""
+        days = []
+        for d in range(1, calendar.monthrange(year, month)[1] + 1):
+            p = day_path(f"{year:04d}-{month:02d}-{d:02d}")
+            if not p.exists():
+                continue
+            with _lock:
+                text = p.read_text(encoding="utf-8")
+            if any(line.startswith("- " + PLAN_PREFIX) for line in text.split("\n")):
+                days.append(d)
+        return days
 
     def _scan_log_items(self, start_date=None, end_date=None):
         """Yield (date_str, hour, item_text) for every log item in range (None = open-ended), oldest first."""
