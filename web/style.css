@@ -188,7 +188,8 @@ mark.search-hit{ background:#FFE58F; color:inherit; border-radius:2px; padding:0
 
 .entry-item{ cursor:text; border-radius:4px; padding:2px 4px; margin:0 -4px; font-size:13px; color:var(--text-primary); line-height:1.6; }
 .entry-item:hover{ background:var(--surface-2); }
-.entry-item + .entry-item, .entry-item + .edit-textarea, .edit-textarea + .entry-item, .edit-textarea + .edit-textarea, .live-slot{ margin-top:6px; }
+.entry-item + .entry-item, .entry-item + .edit-textarea, .edit-textarea + .entry-item, .edit-textarea + .edit-textarea{ margin-top:1px; }
+.live-slot{ margin-top:2px; }
 
 .edit-textarea, .live-slot{
   border:none; background:transparent; font-family:var(--font-sans); font-size:13px;
