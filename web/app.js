@@ -1060,10 +1060,10 @@ function renderEntries(){
   });
 }
 
-// Every line's text starts at the same x position within an hour block:
-// tag slots are widened to match the widest tag badge in the block, and
-// plain (untagged) lines get matching left padding instead of sitting
-// flush at the margin.
+// Tag slots are widened to match the widest tag badge in the block so every
+// tagged line's text starts at the same x. Plain (untagged) lines and the
+// continuation lines of an entry are NOT indented to match: they start at the
+// left margin, so text can be written from the very front.
 function alignPlainLines(block){
   var pills = block.querySelectorAll('.tag-slot > .tag-pill-inline');
   var maxWidth = 0;
@@ -1074,9 +1074,8 @@ function alignPlainLines(block){
   block.querySelectorAll('.tag-slot').forEach(function(slot){
     slot.style.width = maxWidth ? Math.ceil(maxWidth) + 'px' : '';
   });
-  var indent = maxWidth ? Math.ceil(maxWidth) + 6 : 0;
   block.querySelectorAll('.plain-line').forEach(function(line){
-    line.style.paddingLeft = indent ? indent + 'px' : '';
+    line.style.paddingLeft = '';
   });
 }
 
