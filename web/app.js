@@ -1980,7 +1980,7 @@ function recurSummary(r){
 function newRecurForm(){
   var now = new Date();
   return { id: '', text: '', freq: 'monthly', weekday: now.getDay(), interval: 1, day: now.getDate(),
-           time: '', start: todayIso(), end: '', next: null };
+           time: '', writeAt: 'month', start: todayIso(), end: '', next: null };
 }
 
 function openRecur(){
@@ -2051,7 +2051,12 @@ function renderRecur(){
     name.innerHTML = renderInlineTags(r.text.replace(/</g, '&lt;'));
     row.appendChild(name);
     row.appendChild(recurEl('div', 'recur-item-sub', recurSummary(r)));
-    function pick(){ recurForm = JSON.parse(JSON.stringify(r)); recurDeleteArmed = false; renderRecur(); }
+    function pick(){
+      recurForm = JSON.parse(JSON.stringify(r));
+      if(!recurForm.writeAt) recurForm.writeAt = recurForm.freq === 'monthly' ? 'month' : 'day';
+      recurDeleteArmed = false;
+      renderRecur();
+    }
     row.addEventListener('click', pick);
     onActivateKey(row, pick);
     list.appendChild(row);
@@ -2108,7 +2113,11 @@ function buildRecurForm(){
   box.appendChild(title);
 
   box.appendChild(recurRow('내용', recurInput('text', f.text, 'wide', function(v){ f.text = v; })));
-  box.appendChild(recurRow('주기', recurPills(RECUR_FREQS, f.freq, function(v){ f.freq = v; renderRecur(); })));
+  box.appendChild(recurRow('주기', recurPills(RECUR_FREQS, f.freq, function(v){
+    f.freq = v;
+    if(v === 'daily' || v === 'weekdays') f.writeAt = 'day';
+    renderRecur();
+  })));
 
   if(f.freq === 'weekly' || f.freq === 'biweekly'){
     var wd = WEEKDAY_NAMES.map(function(n, i){ return [i, n]; });
@@ -2150,6 +2159,15 @@ function buildRecurForm(){
   }
   time.addEventListener('change', function(){ f.time = time.value; });
   box.appendChild(recurRow('시간', [time, recurEl('span', 'recur-hint', '정하면 로그의 그 시간대에 기록됨')]));
+
+  if(f.freq !== 'daily' && f.freq !== 'weekdays'){
+    box.appendChild(recurRow('기록', [
+      recurPills([['day', '당일'], ['month', '월초 (매월 1일)']], f.writeAt || 'day', function(v){ f.writeAt = v; renderRecur(); }),
+      recurEl('span', 'recur-hint', f.writeAt === 'month'
+        ? '해당 월 1일 로그에 "(25일)"처럼 날짜를 붙여 기록함'
+        : '그 날짜가 되면 그날 로그에 기록함')
+    ]));
+  }
 
   if(f.freq !== 'once'){
     box.appendChild(recurRow('기간', [

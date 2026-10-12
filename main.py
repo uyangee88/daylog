@@ -356,6 +356,54 @@ def fill_due_recurring():
         _fill_due_locked()
 
 
+def rule_write_at(rule):
+    """'day': written into the log of the day it falls on.
+    'month': written into the 1st of that month's log as "text (N일)".
+    Monthly rules default to 'month' unless they say otherwise."""
+    v = rule.get("writeAt")
+    if v in ("day", "month"):
+        return v
+    return "month" if rule.get("freq") == "monthly" else "day"
+
+
+def _append_to_log(date_iso, hour, line):
+    """Add a line to a day's log under `hour` (None = first group, else 09:00)."""
+    p = day_path(date_iso)
+    with _lock:
+        data = parse_day(p.read_text(encoding="utf-8")) if p.exists() else {"entries": [], "focus": None, "mood": None}
+        hour = hour or (data["entries"][0]["hour"] if data["entries"] else "09:00")
+        group = next((g for g in data["entries"] if g["hour"] == hour), None)
+        if group is None:
+            group = {"hour": hour, "items": []}
+            data["entries"].append(group)
+            data["entries"].sort(key=lambda g: g["hour"])
+        group["items"].append(line)
+        p.write_text(
+            serialize_day(date_iso, data["entries"], data["focus"], data["mood"]),
+            encoding="utf-8",
+        )
+
+
+def _remove_from_log(date_iso, line):
+    """Remove one line previously written by a rule (if it is still there)."""
+    p = day_path(date_iso)
+    if not p.exists():
+        return
+    with _lock:
+        data = parse_day(p.read_text(encoding="utf-8"))
+        for g in data["entries"]:
+            if line in g["items"]:
+                g["items"].remove(line)
+                break
+        else:
+            return
+        data["entries"] = [g for g in data["entries"] if g["items"]]
+        if not data["entries"] and not data["focus"] and not data["mood"]:
+            p.unlink()
+        else:
+            p.write_text(serialize_day(date_iso, data["entries"], data["focus"], data["mood"]), encoding="utf-8")
+
+
 def _fill_due_locked():
     rules = load_recurring()
     if not rules:
@@ -365,29 +413,36 @@ def _fill_due_locked():
     for rule in rules:
         try:
             filled = set(rule.get("filled") or [])
-            since = max(_d(rule.get("created") or rule["start"]), _d(rule["start"]))
-            due = [
-                (o, n) for o, n in rule_occurrences(rule, since, today)
-                if o.isoformat() not in filled
-            ][:RECUR_FILL_CAP]
+            written = rule.setdefault("written", {})
+            created = _d(rule.get("created") or rule["start"])
+            if rule_write_at(rule) == "month":
+                # everything that falls in a month whose 1st has arrived, and that
+                # is not already behind the day the rule was created
+                last = date(today.year, today.month, calendar.monthrange(today.year, today.month)[1])
+                due = [
+                    (o, n) for o, n in rule_occurrences(rule, created, last)
+                    if o.isoformat() not in filled
+                ][:RECUR_FILL_CAP]
+            else:
+                since = max(created, _d(rule["start"]))
+                due = [
+                    (o, n) for o, n in rule_occurrences(rule, since, today)
+                    if o.isoformat() not in filled
+                ][:RECUR_FILL_CAP]
         except (KeyError, ValueError):
             continue
         for orig, actual in due:
-            p = day_path(actual.isoformat())
-            with _lock:
-                data = parse_day(p.read_text(encoding="utf-8")) if p.exists() else {"entries": [], "focus": None, "mood": None}
-                hour = rule.get("time") or (data["entries"][0]["hour"] if data["entries"] else "09:00")
-                group = next((g for g in data["entries"] if g["hour"] == hour), None)
-                if group is None:
-                    group = {"hour": hour, "items": []}
-                    data["entries"].append(group)
-                    data["entries"].sort(key=lambda g: g["hour"])
-                group["items"].append(rule["text"])
-                p.write_text(
-                    serialize_day(actual.isoformat(), data["entries"], data["focus"], data["mood"]),
-                    encoding="utf-8",
-                )
+            if rule_write_at(rule) == "month":
+                target = actual.replace(day=1)
+                line = f"{rule['text']} ({actual.day}일)"
+            else:
+                target, line = actual, rule["text"]
+            if target > today:
+                continue
+            _append_to_log(target.isoformat(), rule.get("time") or None, line)
             filled.add(orig.isoformat())
+            if rule_write_at(rule) == "month":
+                written[orig.isoformat()] = {"date": target.isoformat(), "text": line}
             changed = True
         rule["filled"] = sorted(filled)
     if changed:
@@ -423,6 +478,9 @@ def _clean_rule(raw, old=None):
         "created": (old or {}).get("created") or date.today().isoformat(),
         "overrides": (old or {}).get("overrides") or {},
         "filled": (old or {}).get("filled") or [],
+        "written": (old or {}).get("written") or {},
+        # a daily/weekday rule would put ~30 lines into the 1st, so it always stays per day
+        "writeAt": "month" if (raw.get("writeAt") or ("month" if freq == "monthly" else "day")) == "month" and freq not in ("daily", "weekdays") else "day",
     }
     return rule
 
@@ -452,7 +510,8 @@ class Api:
             try:
                 nxt = rule_occurrences(r, today, today + timedelta(days=800))
                 filled = set(r.get("filled") or [])
-                nxt = [n for o, n in nxt if o.isoformat() not in filled]
+                keep_filled = rule_write_at(r) == "month"  # written early, still upcoming
+                nxt = [n for o, n in nxt if keep_filled or o.isoformat() not in filled]
                 item["next"] = nxt[0].isoformat() if nxt else None
             except (KeyError, ValueError):
                 item["next"] = None
@@ -487,9 +546,10 @@ class Api:
         out = []
         for r in load_recurring():
             filled = set(r.get("filled") or [])
+            keep_filled = rule_write_at(r) == "month"  # written on the 1st, still upcoming
             try:
                 for orig, actual in rule_occurrences(r, lo, hi):
-                    if orig.isoformat() in filled:
+                    if actual < date.today() or (orig.isoformat() in filled and not keep_filled):
                         continue
                     out.append(
                         {
@@ -514,8 +574,17 @@ class Api:
             return {"ok": False}
         rules = load_recurring()
         for r in rules:
-            if r["id"] != rule_id or orig in (r.get("filled") or []):
+            if r["id"] != rule_id:
                 continue
+            if orig in (r.get("filled") or []):
+                if rule_write_at(r) != "month":
+                    continue
+                # already written on the 1st: take that line back, it is re-written
+                # (with the new day, in the new month's 1st) by fill_due_recurring
+                info = (r.get("written") or {}).pop(orig, None)
+                if info:
+                    _remove_from_log(info["date"], info["text"])
+                r["filled"] = [f for f in r["filled"] if f != orig]
             moves = r.setdefault("overrides", {})
             if o == n:
                 moves.pop(orig, None)
