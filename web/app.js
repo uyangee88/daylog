@@ -845,6 +845,15 @@ function makeLiveSlot(group){
   div.addEventListener('compositionstart', function(){ composing = true; });
   div.addEventListener('compositionend', function(){ composing = false; });
 
+  // An empty input line under existing entries is collapsed (no blank gap)
+  // until the cursor is put there; a group with no entries keeps it visible.
+  function syncIdle(){
+    var empty = !contentEditableToText(div).trim();
+    div.classList.toggle('idle', empty && group.items.length > 0 && document.activeElement !== div);
+  }
+  div.addEventListener('focus', function(){ div.classList.remove('idle'); });
+  syncIdle();
+
   function planned(text){ return div.getAttribute('data-plan') === '1' ? PLAN_PREFIX + text : text; }
 
   function commitAndContinue(){
@@ -882,7 +891,11 @@ function makeLiveSlot(group){
     // skip the re-render when there's nothing to commit: a no-op render here
     // would tear out whatever element focus is moving to (e.g. during
     // arrow-key navigation into another entry) before it finishes focusing.
-    if(!text) return;
+    if(!text){
+      settled = false;
+      syncIdle();
+      return;
+    }
     group.items.push(planned(text));
     renderEntries();
     scheduleSave();
@@ -1044,6 +1057,14 @@ function renderEntries(){
     });
     block.appendChild(slot);
     if(!pastDay) block.appendChild(chip);
+    // click in the blank area under the entries (or on the hour) to start a new line
+    block.addEventListener('click', function(e){
+      if(e.target !== block && e.target !== timeEl) return;
+      var items = block.querySelectorAll('.entry-item');
+      var last = items.length ? items[items.length - 1] : null;
+      if(e.target === block && last && e.clientY < last.getBoundingClientRect().bottom) return;
+      slot.focus();
+    });
     list.appendChild(block);
   });
 
