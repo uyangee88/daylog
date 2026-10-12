@@ -2162,9 +2162,9 @@ function buildRecurForm(){
 
   if(f.freq !== 'daily' && f.freq !== 'weekdays'){
     box.appendChild(recurRow('기록', [
-      recurPills([['day', '당일'], ['month', '월초 (매월 1일)']], f.writeAt || 'day', function(v){ f.writeAt = v; renderRecur(); }),
+      recurPills([['day', '당일'], ['month', '월초에 미리']], f.writeAt || 'day', function(v){ f.writeAt = v; renderRecur(); }),
       recurEl('span', 'recur-hint', f.writeAt === 'month'
-        ? '해당 월 1일 로그에 "(25일)"처럼 날짜를 붙여 기록함'
+        ? '월이 시작되면 그 날짜 로그에 ◇ 예정으로 미리 기록함'
         : '그 날짜가 되면 그날 로그에 기록함')
     ]));
   }

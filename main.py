@@ -357,8 +357,9 @@ def fill_due_recurring():
 
 
 def rule_write_at(rule):
-    """'day': written into the log of the day it falls on.
-    'month': written into the 1st of that month's log as "text (N일)".
+    """'day': written into the log of the day it falls on, when that day arrives.
+    'month': written into the log of the day it falls on as a planned ("[예정] ")
+    entry as soon as its month has started (ahead of the day itself).
     Monthly rules default to 'month' unless they say otherwise."""
     v = rule.get("writeAt")
     if v in ("day", "month"):
@@ -416,8 +417,15 @@ def _fill_due_locked():
             written = rule.setdefault("written", {})
             created = _d(rule.get("created") or rule["start"])
             if rule_write_at(rule) == "month":
-                # everything that falls in a month whose 1st has arrived, and that
-                # is not already behind the day the rule was created
+                # an earlier version wrote "text (N일)" into the 1st of the month;
+                # take those back so they are re-written on their own day
+                for orig_s, info in list(written.items()):
+                    if not str(info.get("text", "")).startswith(PLAN_PREFIX):
+                        _remove_from_log(info["date"], info["text"])
+                        written.pop(orig_s)
+                        filled.discard(orig_s)
+                # everything that falls in the current month (or earlier, back to
+                # the day the rule was created)
                 last = date(today.year, today.month, calendar.monthrange(today.year, today.month)[1])
                 due = [
                     (o, n) for o, n in rule_occurrences(rule, created, last)
@@ -432,12 +440,9 @@ def _fill_due_locked():
         except (KeyError, ValueError):
             continue
         for orig, actual in due:
-            if rule_write_at(rule) == "month":
-                target = actual.replace(day=1)
-                line = f"{rule['text']} ({actual.day}일)"
-            else:
-                target, line = actual, rule["text"]
-            if target > today:
+            target = actual
+            line = (PLAN_PREFIX if rule_write_at(rule) == "month" else "") + rule["text"]
+            if rule_write_at(rule) != "month" and target > today:
                 continue
             _append_to_log(target.isoformat(), rule.get("time") or None, line)
             filled.add(orig.isoformat())
