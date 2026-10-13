@@ -436,6 +436,8 @@ function computeTodoMarks(){
   var monthLast = new Date(viewYear, viewMonth-1, daysCount);
 
   nextItems.forEach(function(item){
+    // completed items leave the calendar: only open items show their start dot
+    if(item.done) return;
     var start = isoToDate(item.added);
     var startInView = inMonth(start);
     if(!item.done){
