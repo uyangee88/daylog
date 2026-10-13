@@ -562,6 +562,7 @@ class Api:
                             "text": r["text"],
                             "orig": orig.isoformat(),
                             "date": actual.isoformat(),
+                            "hour": r.get("time") or "",
                             "changed": orig != actual,
                         }
                     )
@@ -644,16 +645,22 @@ class Api:
         return result
 
     def get_month_plans(self, year, month):
-        """Days of the month that contain at least one entry marked "[예정]"."""
-        days = []
+        """{day: latest hour ("HH:00") holding an entry marked "[예정]"} for the month."""
+        days = {}
         for d in range(1, calendar.monthrange(year, month)[1] + 1):
             p = day_path(f"{year:04d}-{month:02d}-{d:02d}")
             if not p.exists():
                 continue
             with _lock:
                 text = p.read_text(encoding="utf-8")
-            if any(line.startswith("- " + PLAN_PREFIX) for line in text.split("\n")):
-                days.append(d)
+            hour = ""
+            for line in text.split("\n"):
+                m = HOUR_RE.match(line)
+                if m:
+                    hour = m.group(1)
+                elif line.startswith("- " + PLAN_PREFIX) and hour:
+                    if hour > days.get(str(d), ""):
+                        days[str(d)] = hour
         return days
 
     def _scan_log_items(self, start_date=None, end_date=None):

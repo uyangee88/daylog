@@ -274,10 +274,19 @@ var PLAN_PREFIX = '[예정] ';
 // dateIso: the day this entry belongs to; the ◇ mark (same as the calendar's)
 // shows only until that day has passed. It hangs in the left gutter so it
 // doesn't disturb the tag-column alignment.
-function renderEntryContent(text, dateIso){
+// Still ahead: a later day, or today with the hour not reached yet. An unknown
+// hour counts as "later today".
+function planUpcoming(dateIso, hour){
+  var today = todayIso();
+  if(dateIso > today) return true;
+  if(dateIso < today) return false;
+  return !hour || hour > currentHourStr();
+}
+
+function renderEntryContent(text, dateIso, hour){
   var planned = text.indexOf(PLAN_PREFIX) === 0;
   if(planned) text = text.slice(PLAN_PREFIX.length);
-  var mark = (planned && (dateIso || selectedDate) >= todayIso()) ? '<span class="plan-diamond" title="예정">◇</span>' : '';
+  var mark = (planned && planUpcoming(dateIso || selectedDate, hour)) ? '<span class="plan-diamond" title="예정">◇</span>' : '';
   var lines = text.split('\n');
   return mark + lines.map(function(line){
     // IME composition can occasionally leave stray leading whitespace on a
@@ -311,7 +320,7 @@ var viewYear, viewMonth;
 var selectedDate = todayIso();
 var monthTags = {};       // { "9": ["tag1","tag2"] }
 var monthOcc = {};        // { "12": [occurrence, ...] } upcoming recurring occurrences
-var monthPlans = {};      // { "12": true } days holding an entry marked 예정
+var monthPlans = {};      // { "12": "15:00" } latest hour holding an entry marked 예정
 var nextItems = [];       // [{done,text,added,doneDate}]
 var dayData = { entries: [], focus: null, mood: null };
 var saveTimer = null;
@@ -350,10 +359,11 @@ function updateMonthTagsLocally(dateStr, entries){
   var day = d.getDate();
   if(seen.length){ monthTags[String(day)] = seen.slice(0,4); }
   else { delete monthTags[String(day)]; }
-  var hasPlan = entries.some(function(g){
-    return g.items.some(function(it){ return it.indexOf(PLAN_PREFIX) === 0; });
+  var planHourLatest = '';
+  entries.forEach(function(g){
+    if(g.hour > planHourLatest && g.items.some(function(it){ return it.indexOf(PLAN_PREFIX) === 0; })) planHourLatest = g.hour;
   });
-  if(hasPlan) monthPlans[String(day)] = true; else delete monthPlans[String(day)];
+  if(planHourLatest) monthPlans[String(day)] = planHourLatest; else delete monthPlans[String(day)];
   renderCalendarDots();
 }
 
@@ -376,8 +386,7 @@ function loadMonth(){
     });
     monthTags = results[0] || {};
     nextItems = results[1] || [];
-    monthPlans = {};
-    (results[2] || []).forEach(function(d){ monthPlans[String(d)] = true; });
+    monthPlans = results[2] || {};
     renderCalendar();
     renderNextList();
   });
@@ -539,20 +548,18 @@ function renderCalendarSelection(){
 
 function fillDotRow(row, day){
   row.innerHTML = '';
-  (monthTags[String(day)] || []).forEach(function(tag){
-    var dot = document.createElement('span');
-    dot.className = 'tag-dot';
-    dot.style.background = tagColor(tag).dot;
-    row.appendChild(dot);
-  });
-  // ◇ = something planned for a day that hasn't passed yet
   var dateStr = viewYear+'-'+pad(viewMonth)+'-'+pad(day);
-  var occs = monthOcc[String(day)];
-  if((monthPlans[String(day)] || occs) && dateStr >= todayIso()){
+  var occs = (monthOcc[String(day)] || []).filter(function(o){ return planUpcoming(o.date, o.hour); });
+  var planned = monthPlans[String(day)];
+  var upcoming = occs.length > 0 || (planned && planUpcoming(dateStr, planned));
+
+  // a day with something still planned shows only ◇; once that time has
+  // passed it shows its tag dots like any other day
+  if(upcoming){
     var mark = document.createElement('span');
     mark.className = 'plan-mark';
     mark.textContent = '◇';
-    if(occs){
+    if(occs.length){
       mark.classList.add('plan-click');
       mark.title = '이번 회차 날짜 변경';
       mark.addEventListener('click', function(e){
@@ -561,7 +568,14 @@ function fillDotRow(row, day){
       });
     }
     row.appendChild(mark);
+    return;
   }
+  (monthTags[String(day)] || []).forEach(function(tag){
+    var dot = document.createElement('span');
+    dot.className = 'tag-dot';
+    dot.style.background = tagColor(tag).dot;
+    row.appendChild(dot);
+  });
 }
 
 function renderCalendarDots(){
@@ -1046,7 +1060,7 @@ function buildEntryItemEl(g, itemText, idx){
   contentEl.className = 'entry-item';
   contentEl.setAttribute('data-hour', g.hour);
   contentEl.setAttribute('data-idx', idx);
-  contentEl.innerHTML = renderEntryContent(itemText, selectedDate);
+  contentEl.innerHTML = renderEntryContent(itemText, selectedDate, g.hour);
   contentEl.addEventListener('click', function(e){
     var pill = e.target.closest('.tag-pill-inline');
     if(pill && pill.hasAttribute('data-tag')){
@@ -1432,7 +1446,7 @@ function renderSearchResults(res, parsed){
     byDate[dateStr].forEach(function(m){
       var item = document.createElement('div');
       item.className = 'entry-item';
-      item.innerHTML = renderEntryContent(m.text, dateStr);
+      item.innerHTML = renderEntryContent(m.text, dateStr, m.hour);
       hl(item);
       item.addEventListener('click', function(e){
         var pill = e.target.closest('.tag-pill-inline');
@@ -1981,12 +1995,18 @@ function editTimerName(el, r){
 
 /* ---------------- clock watch ---------------- */
 
+var calendarHourWatch = currentHourStr();
+
 setInterval(function(){
   var hour = currentHourStr();
   if(selectedDate === todayIso() && hour !== currentHourWatch){
     currentHourWatch = hour;
     ensureCurrentHourGroup();
     renderEntries();
+  }
+  if(hour !== calendarHourWatch){
+    calendarHourWatch = hour;
+    renderCalendarDots();   // an hour that has now passed stops counting as planned
   }
   var t = todayIso();
   document.querySelectorAll('.cal-cell').forEach(function(c){
