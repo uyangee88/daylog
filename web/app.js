@@ -655,11 +655,16 @@ function openNoteEditor(slot, item, idx){
     if(done) return;
     done = true;
     var value = contentEditableToText(input).replace(/\s+/g, ' ').trim();
+    // a just-completed item leaves the main list as soon as its note box closes
+    var wasJustDone = (justDoneIdx === idx);
+    if(wasJustDone) justDoneIdx = -1;
     if(commit && value !== (item.note || '')){
       api.set_next_note(idx, value).then(function(items){
         nextItems = items;
         renderNextList();
       });
+    } else if(wasJustDone){
+      renderNextList();
     } else {
       renderNoteSlot(slot, item, idx);
     }
@@ -700,12 +705,43 @@ function dateField(idx, which, value, min, max){
   return span;
 }
 
+var justDoneIdx = -1;      // item completed a moment ago whose note box is still open (stays in the main list until then)
+var doneExpanded = false;  // whether the "완료 N건" section at the bottom is open
+
 function renderNextList(){
   var box = document.getElementById('next-list');
   box.innerHTML = '';
   var openNote = pendingNoteIdx;
   pendingNoteIdx = -1;
+  if(justDoneIdx !== openNote) justDoneIdx = -1;
+
+  var doneIdx = [];
   nextItems.forEach(function(item, idx){
+    if(item.done && idx !== justDoneIdx){ doneIdx.push(idx); return; }
+    buildNextRow(box, item, idx, openNote);
+  });
+
+  // completed items are tucked away in a collapsed section at the bottom
+  if(doneIdx.length){
+    var toggle = document.createElement('div');
+    toggle.className = 'next-done-toggle' + (doneExpanded ? ' open' : '');
+    toggle.setAttribute('role', 'button');
+    toggle.setAttribute('tabindex', '0');
+    toggle.innerHTML = '<svg class="next-done-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+    var label = document.createElement('span');
+    label.textContent = '완료 ' + doneIdx.length + '건';
+    toggle.appendChild(label);
+    function flip(){ doneExpanded = !doneExpanded; renderNextList(); }
+    toggle.addEventListener('click', flip);
+    onActivateKey(toggle, flip);
+    box.appendChild(toggle);
+    if(doneExpanded){
+      doneIdx.forEach(function(i){ buildNextRow(box, nextItems[i], i, -1); });
+    }
+  }
+}
+
+function buildNextRow(box, item, idx, openNote){
     var row = document.createElement('div');
     row.className = 'next-item' + (item.done ? ' done' : '');
 
@@ -715,7 +751,7 @@ function renderNextList(){
     cb.addEventListener('change', function(){
       api.toggle_next(idx, cb.checked).then(function(items){
         nextItems = items;
-        if(items[idx] && items[idx].done && !items[idx].note) pendingNoteIdx = idx;
+        if(items[idx] && items[idx].done && !items[idx].note){ pendingNoteIdx = idx; justDoneIdx = idx; }
         renderNextList();
         renderCalendar();
       });
@@ -765,7 +801,6 @@ function renderNextList(){
     box.appendChild(row);
     // Only once the row is in the document can the editor take focus.
     if(idx === openNote) openNoteEditor(noteSlot, item, idx);
-  });
 }
 
 // Edits in place by making the existing text div contenteditable (same
