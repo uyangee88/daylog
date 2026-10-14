@@ -288,10 +288,11 @@ function renderEntryContent(text, dateIso, hour){
   if(planned) text = text.slice(PLAN_PREFIX.length);
   var mark = (planned && planUpcoming(dateIso || selectedDate, hour)) ? '<span class="plan-diamond" title="예정">◇</span>' : '';
   var lines = text.split('\n');
-  return mark + lines.map(function(line){
+  return mark + lines.map(function(rawLine){
     // IME composition can occasionally leave stray leading whitespace on a
-    // line; strip it before testing so a leading #tag still gets detected.
-    line = line.replace(/^[ \t]+/, '');
+    // line; ignore it only when testing for a leading #tag. Lines that are not
+    // tagged keep the spaces as typed, so they can be used to indent.
+    var line = rawLine.replace(/^[ \t]+/, '');
     var leadMatch = line.match(/^#([\w가-힣]+)\s?/);
     if(leadMatch){
       var tagName = leadMatch[1];
@@ -301,7 +302,7 @@ function renderEntryContent(text, dateIso, hour){
       var restHtml = '<span class="rest-text">' + renderInlineTags(rest) + '</span>';
       return '<div class="tagged-line">' + pillHtml + restHtml + '</div>';
     }
-    return '<div class="plain-line">' + renderInlineTags(line) + '</div>';
+    return '<div class="plain-line">' + renderInlineTags(rawLine) + '</div>';
   }).join('');
 }
 function extractTags(text){
