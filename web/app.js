@@ -402,6 +402,7 @@ function loadDay(dateStr){
       mood: data.mood || null
     };
     ensureCurrentHourGroup();
+    dropPassedPlans();
     renderEntries();
     renderStatus();
     loadTimer(dateStr);
@@ -415,6 +416,25 @@ function switchToDate(dateStr){
   selectedDate = dateStr;
   loadDay(selectedDate);
   renderCalendarSelection();
+}
+
+// "[예정] " only marks entries whose time is still ahead; once the day/hour has
+// passed the marker is dropped (the backend does the same on disk).
+function dropPassedPlans(){
+  var today = todayIso();
+  if(selectedDate > today) return false;
+  var cur = currentHourStr();
+  var changed = false;
+  dayData.entries.forEach(function(g){
+    if(selectedDate < today || g.hour <= cur){
+      g.items = g.items.map(function(it){
+        if(it.indexOf(PLAN_PREFIX) !== 0) return it;
+        changed = true;
+        return it.slice(PLAN_PREFIX.length);
+      });
+    }
+  });
+  return changed;
 }
 
 function ensureCurrentHourGroup(){
@@ -2003,6 +2023,7 @@ setInterval(function(){
   if(selectedDate === todayIso() && hour !== currentHourWatch){
     currentHourWatch = hour;
     ensureCurrentHourGroup();
+    if(dropPassedPlans()) scheduleSave();
     renderEntries();
   }
   if(hour !== calendarHourWatch){

@@ -348,8 +348,47 @@ def rule_occurrences(rule, lo, hi):
 _fill_lock = threading.Lock()
 
 
+_plans_cleaned_at = None
+
+
+def clean_passed_plans():
+    """Drop the "[예정] " marker from entries whose day/hour has passed.
+
+    Runs at most once per clock hour (and data folder): the marker only matters
+    while the planned time is still ahead.
+    """
+    global _plans_cleaned_at
+    now = datetime.now()
+    key = (str(DATA_DIR), now.date().isoformat(), now.hour)
+    if _plans_cleaned_at == key:
+        return
+    today = now.date().isoformat()
+    cur_hour = f"{now.hour:02d}:00"
+    for p in sorted(DATA_DIR.glob("????-??-??.md")):
+        day = p.stem
+        if not DAY_FILE_RE.match(p.name) or day > today:
+            continue
+        with _lock:
+            text = p.read_text(encoding="utf-8")
+            if PLAN_PREFIX not in text:
+                continue
+            out, hour, changed = [], "", False
+            for line in text.split("\n"):
+                m = HOUR_RE.match(line)
+                if m:
+                    hour = m.group(1)
+                elif line.startswith("- " + PLAN_PREFIX) and hour and (day < today or hour <= cur_hour):
+                    line = "- " + line[2 + len(PLAN_PREFIX):]
+                    changed = True
+                out.append(line)
+            if changed:
+                p.write_text("\n".join(out), encoding="utf-8")
+    _plans_cleaned_at = key
+
+
 def fill_due_recurring():
     """Write every occurrence whose day has arrived into that day's log (once)."""
+    clean_passed_plans()
     # get_day and get_month_tags run on separate threads at startup; without this
     # both could write the same occurrence.
     with _fill_lock:
