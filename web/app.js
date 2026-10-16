@@ -437,12 +437,22 @@ function dropPassedPlans(){
   return changed;
 }
 
+// Hour groups the clock created that were never used disappear once their hour is over.
+function pruneAutoGroups(currentHour){
+  var focusedHour = document.activeElement && document.activeElement.getAttribute
+    ? document.activeElement.getAttribute('data-hour') : null;
+  dayData.entries = dayData.entries.filter(function(g){
+    return !(g.auto && g.items.length === 0 && g.hour < currentHour && g.hour !== focusedHour);
+  });
+}
+
 function ensureCurrentHourGroup(){
   if(selectedDate !== todayIso()) return;
   var hour = currentHourStr();
   var exists = dayData.entries.some(function(g){ return g.hour === hour; });
   if(!exists){
-    dayData.entries.push({hour:hour, items:[]});
+    // auto: made by the clock, not by the user - dropped again if it stays empty
+    dayData.entries.push({hour:hour, items:[], auto:true});
   }
   dayData.entries.sort(function(a,b){ return a.hour.localeCompare(b.hour); });
 }
@@ -1107,6 +1117,24 @@ function renderEntries(){
     var timeEl = document.createElement('div');
     timeEl.className = 'log-hour';
     timeEl.textContent = g.hour;
+    // an hour with nothing in it can be removed
+    if(g.items.length === 0){
+      var hourDel = document.createElement('span');
+      hourDel.className = 'hour-del';
+      hourDel.setAttribute('role', 'button');
+      hourDel.setAttribute('tabindex', '0');
+      hourDel.setAttribute('aria-label', g.hour + ' 시간대 삭제');
+      hourDel.title = '빈 시간대 삭제';
+      hourDel.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+      var removeHour = function(e){
+        if(e) e.stopPropagation();
+        dayData.entries = dayData.entries.filter(function(x){ return x !== g; });
+        renderEntries();
+      };
+      hourDel.addEventListener('click', removeHour);
+      onActivateKey(hourDel, removeHour);
+      timeEl.appendChild(hourDel);
+    }
     block.appendChild(timeEl);
 
     g.items.forEach(function(itemText, idx){
@@ -2022,6 +2050,7 @@ setInterval(function(){
   var hour = currentHourStr();
   if(selectedDate === todayIso() && hour !== currentHourWatch){
     currentHourWatch = hour;
+    pruneAutoGroups(hour);
     ensureCurrentHourGroup();
     if(dropPassedPlans()) scheduleSave();
     renderEntries();

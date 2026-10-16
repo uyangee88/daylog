@@ -353,3 +353,6 @@ select.recur-input{ cursor:pointer; }
 .next-done-toggle:hover{ color:var(--text-accent); }
 .next-done-chev{ transition:transform 0.12s; flex-shrink:0; }
 .next-done-toggle.open .next-done-chev{ transform:rotate(90deg); }
+.hour-del{ display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; margin-left:6px; border-radius:50%; vertical-align:-3px; color:var(--text-muted); cursor:pointer; opacity:0; transition:opacity 0.1s; }
+.log-block:hover .hour-del, .hour-del:focus-visible{ opacity:1; }
+.hour-del:hover{ background:var(--surface-hover); color:var(--text-primary); }
