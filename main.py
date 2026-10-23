@@ -44,6 +44,7 @@ HOUR_RE = re.compile(r"^### (\d{2}:00)\s*$")
 ENTRY_RE = re.compile(r"^- (.*)$")
 CONT_RE = re.compile(r"^  (.*)$")
 STATUS_RE = re.compile(r"^- (focus|mood): (.+)$")
+STATUS_NOTE_RE = re.compile(r"^- note: ?(.*)$")
 NEXT_RE = re.compile(
     r"^- \[( |x)\] (.*?) \(added: (\d{4}-\d{2}-\d{2})(?:, done: (\d{4}-\d{2}-\d{2}))?(?:, note: (.*))?\)\s*$"
 )
@@ -71,6 +72,7 @@ def parse_day(text):
     entries = []
     focus = None
     mood = None
+    note_lines = None
     section = None
     current_group = None
     buffer = None
@@ -112,11 +114,21 @@ def parse_day(text):
                     focus = val
                 else:
                     mood = val
+                note_lines = None
+                continue
+            m = STATUS_NOTE_RE.match(line)
+            if m:
+                note_lines = [m.group(1)]
+                continue
+            m = CONT_RE.match(line)
+            if m and note_lines is not None:
+                note_lines.append(m.group(1))
     flush()
-    return {"entries": entries, "focus": focus, "mood": mood}
+    note = "\n".join(note_lines).strip() if note_lines else None
+    return {"entries": entries, "focus": focus, "mood": mood, "note": note or None}
 
 
-def serialize_day(date_str, entries, focus, mood):
+def serialize_day(date_str, entries, focus, mood, note=None):
     lines = [f"# {date_str}", "", "## log", ""]
     for g in entries:
         items = [it for it in g.get("items", []) if it.strip() != ""]
@@ -136,6 +148,12 @@ def serialize_day(date_str, entries, focus, mood):
         lines.append(f"- focus: {focus}")
     if mood:
         lines.append(f"- mood: {mood}")
+    note = (note or "").strip()
+    if note:
+        first, *rest = note.split("\n")
+        lines.append(f"- note: {first}")
+        for s in rest:
+            lines.append(f"  {s}")
     lines.append("")
     return "\n".join(lines)
 
@@ -419,7 +437,7 @@ def _append_to_log(date_iso, hour, line):
             data["entries"].sort(key=lambda g: g["hour"])
         group["items"].append(line)
         p.write_text(
-            serialize_day(date_iso, data["entries"], data["focus"], data["mood"]),
+            serialize_day(date_iso, data["entries"], data["focus"], data["mood"], data.get("note")),
             encoding="utf-8",
         )
 
@@ -438,10 +456,10 @@ def _remove_from_log(date_iso, line):
         else:
             return
         data["entries"] = [g for g in data["entries"] if g["items"]]
-        if not data["entries"] and not data["focus"] and not data["mood"]:
+        if not data["entries"] and not data["focus"] and not data["mood"] and not data.get("note"):
             p.unlink()
         else:
-            p.write_text(serialize_day(date_iso, data["entries"], data["focus"], data["mood"]), encoding="utf-8")
+            p.write_text(serialize_day(date_iso, data["entries"], data["focus"], data["mood"], data.get("note")), encoding="utf-8")
 
 
 def _fill_due_locked():
@@ -644,22 +662,22 @@ class Api:
         fill_due_recurring()
         p = day_path(date_str)
         if not p.exists():
-            return {"entries": [], "focus": None, "mood": None}
+            return {"entries": [], "focus": None, "mood": None, "note": None}
         with _lock:
             text = p.read_text(encoding="utf-8")
         return parse_day(text)
 
-    def save_day(self, date_str, entries, focus, mood):
+    def save_day(self, date_str, entries, focus, mood, note=None):
         has_content = any(
             any(it.strip() for it in g.get("items", [])) for g in entries
         )
         p = day_path(date_str)
         with _lock:
-            if not has_content and not focus and not mood:
+            if not has_content and not focus and not mood and not (note or "").strip():
                 if p.exists():
                     p.unlink()
                 return {"ok": True}
-            content = serialize_day(date_str, entries, focus, mood)
+            content = serialize_day(date_str, entries, focus, mood, note)
             p.write_text(content, encoding="utf-8")
         return {"ok": True}
 
@@ -874,7 +892,7 @@ class Api:
                 continue
             with _lock:
                 data = parse_day(p.read_text(encoding="utf-8"))
-            if not data["entries"] and not data["focus"] and not data["mood"]:
+            if not data["entries"] and not data["focus"] and not data["mood"] and not data.get("note"):
                 continue
             parts.append(f"## {month}월 {d}일")
             parts.append("")
@@ -886,6 +904,8 @@ class Api:
             parts.append("### status")
             parts.append(f"- focus: {data['focus'] or '-'}")
             parts.append(f"- mood: {data['mood'] or '-'}")
+            if data.get("note"):
+                parts.append(f"- note: {data['note'].replace(chr(10), ' / ')}")
             parts.append("")
         parts.append("## next")
         for it in self.get_next_list():

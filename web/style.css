@@ -356,3 +356,8 @@ select.recur-input{ cursor:pointer; }
 .hour-del{ display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; margin-left:6px; border-radius:50%; vertical-align:-3px; color:var(--text-muted); cursor:pointer; opacity:0; transition:opacity 0.1s; }
 .log-block:hover .hour-del, .hour-del:focus-visible{ opacity:1; }
 .hour-del:hover{ background:var(--surface-hover); color:var(--text-primary); }
+.status-note-row{ align-items:flex-start; margin-top:12px; }
+.status-note-row .status-label{ padding-top:7px; }
+.status-note{ flex:1; min-width:0; min-height:58px; font-size:13px; line-height:1.6; color:var(--text-primary); background:rgba(255,255,255,0.4); border:1px solid var(--border); border-radius:8px; padding:6px 10px; white-space:pre-wrap; word-break:break-word; cursor:text; }
+.status-note:empty:before{ content:attr(data-placeholder); color:var(--text-muted); }
+.status-note:focus{ border-color:var(--fill-accent); background:rgba(255,255,255,0.65); }

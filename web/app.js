@@ -323,7 +323,7 @@ var monthTags = {};       // { "9": ["tag1","tag2"] }
 var monthOcc = {};        // { "12": [occurrence, ...] } upcoming recurring occurrences
 var monthPlans = {};      // { "12": "15:00" } latest hour holding an entry marked 예정
 var nextItems = [];       // [{done,text,added,doneDate}]
-var dayData = { entries: [], focus: null, mood: null };
+var dayData = { entries: [], focus: null, mood: null, note: null };
 var saveTimer = null;
 var currentHourWatch = currentHourStr();
 
@@ -343,7 +343,8 @@ function flushSave(){
   var entriesAtSave = dayData.entries;
   var focusAtSave = dayData.focus;
   var moodAtSave = dayData.mood;
-  api.save_day(dateAtSave, entriesAtSave, focusAtSave, moodAtSave);
+  var noteAtSave = dayData.note;
+  api.save_day(dateAtSave, entriesAtSave, focusAtSave, moodAtSave, noteAtSave);
   updateMonthTagsLocally(dateAtSave, entriesAtSave);
 }
 function updateMonthTagsLocally(dateStr, entries){
@@ -399,7 +400,8 @@ function loadDay(dateStr){
     dayData = {
       entries: (data.entries || []).map(function(g){ return {hour:g.hour, items:g.items.slice()}; }),
       focus: data.focus || null,
-      mood: data.mood || null
+      mood: data.mood || null,
+      note: data.note || null
     };
     ensureCurrentHourGroup();
     dropPassedPlans();
@@ -1572,7 +1574,17 @@ function renderStatus(){
     var active = group === 'focus' ? dayData.focus === value : dayData.mood === value;
     btn.classList.toggle('active', active);
   });
+  var noteBox = document.getElementById('status-note');
+  if(document.activeElement !== noteBox) noteBox.textContent = dayData.note || '';
 }
+
+// free-text note for the day, saved like the rest of the day (debounced)
+var statusNoteBox = document.getElementById('status-note');
+statusNoteBox.addEventListener('input', function(){
+  dayData.note = contentEditableToText(statusNoteBox).replace(/\s+$/, '') || null;
+  scheduleSave();
+});
+statusNoteBox.addEventListener('blur', flushSave);
 
 function selectStatus(btn){
   var group = btn.getAttribute('data-group');

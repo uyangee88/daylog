@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Daylog</title>
-<link rel="stylesheet" href="style.css?v=39">
+<link rel="stylesheet" href="style.css?v=40">
 </head>
 <body>
 
@@ -119,6 +119,10 @@
           <div class="status-btn" role="button" tabindex="0" data-group="mood" data-value="not bad">not bad</div>
           <div class="status-btn" role="button" tabindex="0" data-group="mood" data-value="good">good</div>
         </div>
+        <div class="status-row status-note-row">
+          <span class="status-label">note</span>
+          <div id="status-note" class="status-note" contenteditable="plaintext-only" spellcheck="false" data-placeholder="오늘 상태 메모"></div>
+        </div>
       </div>
     </div>
 
@@ -137,6 +141,6 @@
 
 <div id="save-toast" class="save-toast">저장됨</div>
 
-<script src="app.js?v=54"></script>
+<script src="app.js?v=55"></script>
 </body>
 </html>
