@@ -185,6 +185,11 @@ mark.search-hit{ background:#FFE58F; color:inherit; border-radius:2px; padding:0
 
 .log-block{ padding:10px 0; }
 .log-hour{ font-size:13px; font-weight:600; color:var(--text-accent); margin-bottom:4px; }
+/* a work hour that has passed with nothing written */
+.log-block.gap{ padding:3px 0; }
+.log-block.gap .log-hour{ color:var(--text-muted); font-weight:500; margin-bottom:0; cursor:text; }
+/* the input line of a gap stays folded until the hour is clicked */
+.log-block.gap .live-slot:not(:focus){ min-height:0; height:0; padding-top:0; padding-bottom:0; margin-top:0; margin-bottom:0; overflow:hidden; border-color:transparent; }
 
 .entry-item{ cursor:text; border-radius:4px; padding:2px 4px; margin:0 -4px; font-size:13px; color:var(--text-primary); line-height:1.6; }
 .entry-item:hover{ background:var(--surface-2); }
@@ -356,8 +361,6 @@ select.recur-input{ cursor:pointer; }
 .hour-del{ display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; margin-left:6px; border-radius:50%; vertical-align:-3px; color:var(--text-muted); cursor:pointer; opacity:0; transition:opacity 0.1s; }
 .log-block:hover .hour-del, .hour-del:focus-visible{ opacity:1; }
 .hour-del:hover{ background:var(--surface-hover); color:var(--text-primary); }
-.status-note-row{ align-items:flex-start; margin-top:12px; }
-.status-note-row .status-label{ padding-top:7px; }
-.status-note{ flex:1; min-width:0; min-height:58px; font-size:13px; line-height:1.6; color:var(--text-primary); background:rgba(255,255,255,0.4); border:1px solid var(--border); border-radius:8px; padding:6px 10px; white-space:pre-wrap; word-break:break-word; cursor:text; }
+.status-note-wrap{ margin-top:12px; padding-top:10px; border-top:1px solid var(--border); }
+.status-note{ min-height:1.6em; font-size:13px; line-height:1.6; color:var(--text-primary); background:transparent; border:none; padding:2px 4px; margin:0 -4px; white-space:pre-wrap; word-break:break-word; cursor:text; outline:none; }
 .status-note:empty:before{ content:attr(data-placeholder); color:var(--text-muted); }
-.status-note:focus{ border-color:var(--fill-accent); background:rgba(255,255,255,0.65); }

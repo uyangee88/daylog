@@ -26,15 +26,50 @@ function shortDate(iso){
 }
 
 function contentEditableToText(el){
-  var html = el.innerHTML;
-  html = html.replace(/<div><br\s*\/?><\/div>/gi, '\n');
-  html = html.replace(/<\/div><div>/gi, '\n');
-  html = html.replace(/<div>/gi, '');
-  html = html.replace(/<\/div>/gi, '');
-  html = html.replace(/<br\s*\/?>/gi, '\n');
-  var tmp = document.createElement('div');
-  tmp.innerHTML = html;
-  return tmp.textContent || tmp.innerText || '';
+  // DOM -> text, line by line: a <br> ends a line, a block (div/p/li...) starts its
+  // own line even when plain text comes right before it (the first line of an
+  // editable is a bare text node, later lines are <div>s), and a <br> that is
+  // the last child of its parent is only a placeholder for an empty line.
+  var lines = [''];
+  var needBreak = false;
+  function startLine(){ lines.push(''); needBreak = false; }
+  function walk(node){
+    for(var ch = node.firstChild; ch; ch = ch.nextSibling){
+      if(ch.nodeType === 3){
+        if(needBreak) startLine();
+        lines[lines.length - 1] += ch.nodeValue;
+        continue;
+      }
+      if(ch.nodeType !== 1) continue;
+      var tag = ch.tagName;
+      if(tag === 'BR'){
+        if(!ch.nextSibling && node !== el) continue;   // placeholder inside a block
+        if(needBreak) startLine();
+        startLine();
+        continue;
+      }
+      var block = /^(DIV|P|LI|UL|OL|H[1-6]|PRE|BLOCKQUOTE|TR)$/.test(tag);
+      if(block && (lines[lines.length - 1] !== '' || needBreak)) startLine();
+      walk(ch);
+      if(block) needBreak = true;
+    }
+  }
+  walk(el);
+  // the browser turns doubled/trailing spaces into non-breaking ones; store plain spaces
+  return lines.join('\n').replace(/\u00a0/g, ' ');
+}
+// Paste as plain text only: no fonts/colors/blocks from the source, CRLF -> LF,
+// non-breaking spaces -> spaces. Without this a rich-text paste (browser, Slack,
+// VS Code ...) drops its own markup into the entry.
+function attachPlainPaste(el){
+  el.addEventListener('paste', function(e){
+    var cd = e.clipboardData || window.clipboardData;
+    var text = cd ? cd.getData('text/plain') : '';
+    if(!text) return;   // nothing textual (e.g. an image): leave the default alone
+    e.preventDefault();
+    text = text.replace(/\r\n?/g, '\n').replace(/\u00a0/g, ' ');
+    document.execCommand('insertText', false, text);
+  });
 }
 
 // Enter/Space activation for elements with role="button": lets keyboard
@@ -95,95 +130,46 @@ function placeCaretAtStart(el){
   sel.addRange(range);
 }
 
-// Whether the caret sits at the absolute start/end of a div that holds at
-// most one text node (true of every live-slot / edit-textarea here). Used
-// to detect "nowhere further up/down to go within this div" without any
+// Whether the caret sits at the absolute start/end of a text box (measured as
+// a text offset, so it works however many text nodes typing has split it into).
+// Used to detect "nowhere further up/down to go within this box" without any
 // layout math: we let the arrow key's native caret move happen first, then
-// check where it landed (see handleVerticalNav).
-function caretAtAbsoluteStart(div){
+// check where it landed (see handleBlockNav).
+function caretTextOffset(div){
   var sel = window.getSelection();
-  if(!sel.rangeCount) return true;
+  if(!sel.rangeCount) return null;
   var r = sel.getRangeAt(0);
-  if(!r.collapsed) return false;
-  if(r.startContainer === div) return r.startOffset === 0;
-  if(r.startContainer === div.firstChild) return r.startOffset === 0;
-  return false;
+  if(!r.collapsed || !div.contains(r.startContainer)) return null;
+  var pre = document.createRange();
+  pre.selectNodeContents(div);
+  pre.setEnd(r.startContainer, r.startOffset);
+  return pre.toString().length;
+}
+function caretAtAbsoluteStart(div){
+  return caretTextOffset(div) === 0;
 }
 function caretAtAbsoluteEnd(div){
-  var sel = window.getSelection();
-  if(!sel.rangeCount) return true;
-  var r = sel.getRangeAt(0);
-  if(!r.collapsed) return false;
-  if(r.startContainer === div) return r.startOffset === div.childNodes.length;
-  if(r.startContainer === div.firstChild) return r.startOffset === div.firstChild.textContent.length;
-  return false;
-}
-
-function buildNavTargets(){
-  var targets = [];
-  dayData.entries.forEach(function(g){
-    g.items.forEach(function(_, idx){
-      targets.push({hour: g.hour, kind: 'item', idx: idx});
-    });
-    targets.push({hour: g.hour, kind: 'live'});
-  });
-  return targets;
-}
-function sameTarget(a, hour, kind, idx){
-  return a.hour === hour && a.kind === kind && (kind !== 'item' || a.idx === idx);
-}
-function focusTarget(target, caretPos){
-  if(!target) return false;
-  if(target.kind === 'live'){
-    var slot = document.querySelector('.live-slot[data-hour="'+target.hour+'"]');
-    if(!slot) return false;
-    if(caretPos === 'start') placeCaretAtStart(slot); else placeCaretAtEnd(slot);
-  } else {
-    focusEditableAt(target.hour, target.idx, caretPos);
-  }
-  return true;
-}
-// Lets arrow-up/down move between log entries as if they were one
-// continuous text box, instead of being trapped inside whichever
-// line's own contenteditable div currently has focus.
-//
-// We don't preventDefault up front: there's no reliable layout-free way to
-// know in advance whether the caret is on the div's first/last *visual*
-// line (wrapped text has no simple offset check for that). Instead we let
-// the arrow key's native caret move happen, then check on the next tick
-// whether it landed on the absolute start/end of the div's text - which is
-// exactly what "nothing left to do here, hand off to the next entry" means.
-function handleVerticalNav(e, div, hour, kind, idx, composing){
-  if(composing || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
-  var goingUp = e.key === 'ArrowUp';
-  var goingDown = e.key === 'ArrowDown';
-  if(!goingUp && !goingDown) return;
-
-  setTimeout(function(){
-    var atBoundary = goingUp ? caretAtAbsoluteStart(div) : caretAtAbsoluteEnd(div);
-    if(!atBoundary) return;
-    var targets = buildNavTargets();
-    var i = -1;
-    for(var k=0;k<targets.length;k++){
-      if(sameTarget(targets[k], hour, kind, idx)){ i = k; break; }
-    }
-    if(i === -1) return;
-    var targetIdx = goingUp ? i - 1 : i + 1;
-    if(targetIdx < 0 || targetIdx >= targets.length) return;
-    focusTarget(targets[targetIdx], goingUp ? 'end' : 'start');
-  }, 0);
+  var at = caretTextOffset(div);
+  if(at === null) return false;
+  var all = document.createRange();
+  all.selectNodeContents(div);
+  return at === all.toString().length;
 }
 
 function placeCaretAtOffset(el, offset){
   el.focus();
-  var textNode = el.firstChild;
   var range = document.createRange();
-  if(textNode && textNode.nodeType === Node.TEXT_NODE){
-    var pos = Math.max(0, Math.min(offset, textNode.textContent.length));
-    range.setStart(textNode, pos);
-  } else {
-    range.selectNodeContents(el);
+  var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+  var node, left = Math.max(0, offset), placed = false;
+  while((node = walker.nextNode())){
+    if(left <= node.textContent.length){
+      range.setStart(node, left);
+      placed = true;
+      break;
+    }
+    left -= node.textContent.length;
   }
+  if(!placed){ range.selectNodeContents(el); range.collapse(false); }
   range.collapse(true);
   var sel = window.getSelection();
   sel.removeAllRanges();
@@ -204,22 +190,6 @@ function textOffsetFromPoint(container, x, y){
   return offset;
 }
 
-function splitAtCaret(div){
-  var sel = window.getSelection();
-  if(!sel.rangeCount) return [contentEditableToText(div), ''];
-  var range = sel.getRangeAt(0);
-  var beforeRange = range.cloneRange();
-  beforeRange.selectNodeContents(div);
-  beforeRange.setEnd(range.endContainer, range.endOffset);
-  var afterRange = range.cloneRange();
-  afterRange.selectNodeContents(div);
-  afterRange.setStart(range.endContainer, range.endOffset);
-  var beforeWrap = document.createElement('div');
-  beforeWrap.appendChild(beforeRange.cloneContents());
-  var afterWrap = document.createElement('div');
-  afterWrap.appendChild(afterRange.cloneContents());
-  return [contentEditableToText(beforeWrap), contentEditableToText(afterWrap)];
-}
 
 /* ---------------- tags ---------------- */
 
@@ -439,11 +409,22 @@ function dropPassedPlans(){
   return changed;
 }
 
-// Hour groups the clock created that were never used disappear once their hour is over.
+// Work hours (today only): an hour in this range that has already started keeps
+// its slot even while empty, so a forgotten hour shows up as a gap instead of
+// silently disappearing. Lunch is left out.
+var WORK_HOURS = ['09:00','10:00','11:00','13:00','14:00','15:00','16:00','17:00'];
+// gap slots removed with the x button stay removed for that day (this session)
+var dismissedGaps = {};   // dateIso -> {hour: true}
+function isWorkHour(hour){ return WORK_HOURS.indexOf(hour) !== -1; }
+
+// Hour groups the clock created that were never used disappear once their hour is over
+// (except today's work hours, which stay as gaps).
 function pruneAutoGroups(currentHour){
   var focusedHour = document.activeElement && document.activeElement.getAttribute
     ? document.activeElement.getAttribute('data-hour') : null;
+  var keepGaps = selectedDate === todayIso();
   dayData.entries = dayData.entries.filter(function(g){
+    if(keepGaps && isWorkHour(g.hour)) return true;
     return !(g.auto && g.items.length === 0 && g.hour < currentHour && g.hour !== focusedHour);
   });
 }
@@ -451,11 +432,19 @@ function pruneAutoGroups(currentHour){
 function ensureCurrentHourGroup(){
   if(selectedDate !== todayIso()) return;
   var hour = currentHourStr();
-  var exists = dayData.entries.some(function(g){ return g.hour === hour; });
-  if(!exists){
+  var dismissed = dismissedGaps[selectedDate] || {};
+  var have = {};
+  dayData.entries.forEach(function(g){ have[g.hour] = true; });
+  if(!have[hour]){
     // auto: made by the clock, not by the user - dropped again if it stays empty
     dayData.entries.push({hour:hour, items:[], auto:true});
+    have[hour] = true;
   }
+  WORK_HOURS.forEach(function(h){
+    if(h < hour && !have[h] && !dismissed[h]){
+      dayData.entries.push({hour:h, items:[], auto:true});
+    }
+  });
   dayData.entries.sort(function(a,b){ return a.hour.localeCompare(b.hour); });
 }
 
@@ -915,177 +904,146 @@ function findGroup(hour){
   return dayData.entries.filter(function(g){ return g.hour === hour; })[0];
 }
 
-function makeLiveSlot(group){
-  var div = document.createElement('div');
-  div.className = 'live-slot';
-  div.setAttribute('data-hour', group.hour);
-  div.contentEditable = 'true';
+/* ---------------- hour block: view mode + one text box per hour ---------------- */
+
+// One hour is edited as a single text box: every non-empty line is one entry.
+// Outside editing, the entries are shown rendered (tag pills, 예정 marks);
+// clicking anywhere in the hour opens the whole hour as plain text.
+
+var pendingFullRender = false;   // a full re-render was due while a box was being typed in
+
+function textToItems(text){
+  return text.split('\n')
+    .map(function(l){ return l.replace(/\s+$/, ''); })
+    .filter(function(l){ return l.trim() !== ''; });
+}
+
+function editingBox(){
+  var a = document.activeElement;
+  return a && a.classList && a.classList.contains('block-editor') ? a : null;
+}
+
+function itemsOffset(g, idx){
+  var o = 0;
+  for(var i = 0; i < idx && i < g.items.length; i++) o += g.items[i].length + 1;
+  return o;
+}
+
+function findBlock(hour){
+  return document.querySelector('.log-block[data-hour="'+hour+'"]');
+}
+
+// open (or focus) the text box of an hour; caret: number offset, 'start' or 'end'
+function openBlockEditor(g, block, caret){
+  var ed = block.querySelector('.block-editor');
+  if(!ed){
+    block.querySelectorAll('.entry-item').forEach(function(el){ el.remove(); });
+    ed = makeBlockEditor(g, block);
+    var timeEl = block.querySelector('.log-hour');
+    block.insertBefore(ed, timeEl ? timeEl.nextSibling : block.firstChild);
+  }
+  ed.focus();
+  if(caret === 'start') placeCaretAtStart(ed);
+  else if(typeof caret === 'number') placeCaretAtOffset(ed, caret);
+  else placeCaretAtEnd(ed);
+  return ed;
+}
+
+function focusBlockEditor(hour, caret){
+  var g = findGroup(hour);
+  var block = findBlock(hour);
+  if(!g || !block) return false;
+  openBlockEditor(g, block, caret);
+  return true;
+}
+
+// arrow up on the first line / down on the last line moves to the next hour
+function handleBlockNav(e, ed, hour, composing){
+  if(composing || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+  var goingUp = e.key === 'ArrowUp';
+  var goingDown = e.key === 'ArrowDown';
+  if(!goingUp && !goingDown) return;
+  setTimeout(function(){
+    var atBoundary = goingUp ? caretAtAbsoluteStart(ed) : caretAtAbsoluteEnd(ed);
+    if(!atBoundary) return;
+    var hours = dayData.entries.map(function(g){ return g.hour; });
+    var i = hours.indexOf(hour);
+    var j = goingUp ? i - 1 : i + 1;
+    if(i === -1 || j < 0 || j >= hours.length) return;
+    focusBlockEditor(hours[j], goingUp ? 'end' : 'start');
+  }, 0);
+}
+
+function makeBlockEditor(g, block){
+  var ed = document.createElement('div');
+  ed.className = 'live-slot block-editor';
+  ed.setAttribute('data-hour', g.hour);
+  ed.contentEditable = 'plaintext-only';
+  ed.spellcheck = false;
+  ed.textContent = g.items.join('\n');
+  var composing = false;
   var timer = null;
-  var composing = false;
-  // set right before we remove this element from the DOM ourselves (Enter),
-  // so the synthetic 'blur' that removal triggers doesn't re-commit the same text.
-  var settled = false;
 
-  div.addEventListener('compositionstart', function(){ composing = true; });
-  div.addEventListener('compositionend', function(){ composing = false; });
+  ed.addEventListener('compositionstart', function(){ composing = true; });
+  ed.addEventListener('compositionend', function(){ composing = false; });
+  attachPlainPaste(ed);
 
-  // An empty input line under existing entries is collapsed (no blank gap)
-  // until the cursor is put there; a group with no entries keeps it visible.
-  function syncIdle(){
-    var empty = !contentEditableToText(div).trim();
-    div.classList.toggle('idle', empty && group.items.length > 0 && document.activeElement !== div);
-  }
-  div.addEventListener('focus', function(){ div.classList.remove('idle'); });
-  syncIdle();
-
-  function planned(text){ return div.getAttribute('data-plan') === '1' ? PLAN_PREFIX + text : text; }
-
-  function commitAndContinue(){
-    var text = contentEditableToText(div).trim();
-    if(!text) return;
-    settled = true;
-    group.items.push(planned(text));
-    renderEntries();
-    scheduleSave();
-    var fresh = document.querySelector('.live-slot[data-hour="'+group.hour+'"]');
-    if(fresh) fresh.focus();
+  function sync(){
+    var items = textToItems(contentEditableToText(ed));
+    var changed = items.join('\n') !== g.items.join('\n');
+    g.items = items;
+    if(changed) scheduleSave();
   }
 
-  div.addEventListener('keydown', function(e){
-    if(handleTagSuggestKeydown(e, div)) return;
-    if(e.key === 'Enter' && !e.shiftKey && !composing && e.keyCode !== 229){
-      e.preventDefault();
-      if(timer) clearTimeout(timer);
-      commitAndContinue();
-      return;
-    }
-    handleVerticalNav(e, div, group.hour, 'live', null, composing);
+  ed.addEventListener('keydown', function(e){
+    if(handleTagSuggestKeydown(e, ed)) return;
+    handleBlockNav(e, ed, g.hour, composing);
   });
-  div.addEventListener('input', function(){
+  ed.addEventListener('input', function(){
+    if(!composing) checkTagAutocomplete(ed);
     if(timer) clearTimeout(timer);
-    timer = setTimeout(function(){ scheduleSave(); }, 600);
-    if(!composing) checkTagAutocomplete(div);
+    timer = setTimeout(sync, 500);
   });
-  div.addEventListener('blur', function(){
+  ed.addEventListener('blur', function(){
     closeTagSuggest();
-    if(settled) return;
-    settled = true;
-    if(timer) clearTimeout(timer);
-    var text = contentEditableToText(div).trim();
-    // skip the re-render when there's nothing to commit: a no-op render here
-    // would tear out whatever element focus is moving to (e.g. during
-    // arrow-key navigation into another entry) before it finishes focusing.
-    if(!text){
-      settled = false;
-      syncIdle();
+    if(timer){ clearTimeout(timer); timer = null; }
+    sync();
+    // switching to another window: keep the box open where the caret was
+    if(!document.hasFocus()) return;
+    if(pendingFullRender){
+      pendingFullRender = false;
+      setTimeout(renderEntries, 0);
       return;
     }
-    group.items.push(planned(text));
-    renderEntries();
-    scheduleSave();
+    // back to the rendered view for this hour only, so a click that is
+    // moving focus into another hour isn't torn out by a full re-render
+    if(!block.isConnected) return;
+    var fresh = buildBlock(g);
+    block.replaceWith(fresh);
+    requestAnimationFrame(function(){ alignPlainLines(fresh); });
   });
-  return div;
+  return ed;
 }
 
-function openEditable(el, group, idx, caretPos){
-  var div = document.createElement('div');
-  div.className = 'edit-textarea';
-  div.contentEditable = 'true';
-  div.textContent = group.items[idx];
-
-  // Swapping the rendered item for this raw-text box must not move any line:
-  // keep the item's height, and for plain (untagged) items keep the auto-indent
-  // that alignPlainLines gave them. Tagged items show "#tag" as plain text
-  // instead of a pill, so their first line's text inherently starts further left.
-  var itemHeight = el.getBoundingClientRect().height;
-  var plainLine = el.querySelector('.plain-line');
-  var indent = (plainLine && !el.querySelector('.tagged-line')) ? parseFloat(plainLine.style.paddingLeft) || 0 : 0;
-  el.replaceWith(div);
-  // border-box (global): min-height includes padding; width matches .entry-item,
-  // whose -4px side margins make it 8px wider than its container, so wrapping
-  // is identical in both states.
-  div.style.minHeight = itemHeight + 'px';
-  div.style.width = 'calc(100% + 8px)';
-  if(indent) div.style.paddingLeft = (parseFloat(getComputedStyle(div).paddingLeft) + indent) + 'px';
-
-  if(caretPos === 'start') placeCaretAtStart(div);
-  else if(typeof caretPos === 'number') placeCaretAtOffset(div, caretPos);
-  else placeCaretAtEnd(div);
-
-  var composing = false;
-  var settled = false;
-  div.addEventListener('compositionstart', function(){ composing = true; });
-  div.addEventListener('compositionend', function(){ composing = false; });
-
-  function commitEdit(){
-    if(settled) return;
-    settled = true;
-    var newText = contentEditableToText(div).trim();
-    // unchanged: revert just this one div back to static display instead of
-    // a full renderEntries(), which would tear out whatever element focus
-    // is moving to (e.g. arrow-key navigation into another entry)
-    if(newText === group.items[idx]){
-      if(div.isConnected){
-        var rebuilt = buildEntryItemEl(group, newText, idx);
-        div.replaceWith(rebuilt);
-        // The bare item has no tag-column / plain-line alignment yet; re-apply
-        // it for the hour block, a frame later like renderEntries() does.
-        requestAnimationFrame(function(){
-          var block = rebuilt.closest('.log-block');
-          if(block) alignPlainLines(block);
-        });
-      }
-      return;
-    }
-    if(!newText){
-      group.items.splice(idx, 1);
-    } else {
-      group.items[idx] = newText;
-    }
-    renderEntries();
-    scheduleSave();
+// put / take away "[예정] " at the start of the line the caret is on
+function togglePlanOnCaretLine(ed){
+  var sel = window.getSelection();
+  var text = contentEditableToText(ed);
+  var caret = text.length;
+  if(sel.rangeCount && ed.contains(sel.anchorNode)){
+    caret = offsetWithin(ed, sel.anchorNode, sel.anchorOffset);
   }
-
-  div.addEventListener('keydown', function(e){
-    if(handleTagSuggestKeydown(e, div)) return;
-    if(e.key === 'Enter' && !e.shiftKey && !composing && e.keyCode !== 229){
-      e.preventDefault();
-      settled = true;
-      var parts = splitAtCaret(div);
-      var before = parts[0].trim();
-      var after = parts[1].replace(/^\n+/, '');
-      group.items[idx] = before;
-      group.items.splice(idx+1, 0, after);
-      renderEntries();
-      scheduleSave();
-      focusEditableAt(group.hour, idx+1);
-      return;
-    }
-    handleVerticalNav(e, div, group.hour, 'item', idx, composing);
-  });
-  div.addEventListener('input', function(){
-    if(!composing) checkTagAutocomplete(div);
-  });
-  div.addEventListener('blur', function(){
-    closeTagSuggest();
-    commitEdit();
-  });
-}
-
-function makeItemEditable(itemEl, group, idx, clickEvent){
-  var caretPos = 'end';
-  if(clickEvent){
-    var offset = textOffsetFromPoint(itemEl, clickEvent.clientX, clickEvent.clientY);
-    if(offset !== null) caretPos = offset;
+  var lineStart = text.lastIndexOf('\n', caret - 1) + 1;
+  if(text.substr(lineStart, PLAN_PREFIX.length) === PLAN_PREFIX){
+    text = text.slice(0, lineStart) + text.slice(lineStart + PLAN_PREFIX.length);
+    caret = Math.max(lineStart, caret - PLAN_PREFIX.length);
+  } else {
+    text = text.slice(0, lineStart) + PLAN_PREFIX + text.slice(lineStart);
+    caret += PLAN_PREFIX.length;
   }
-  openEditable(itemEl, group, idx, caretPos);
-}
-
-function focusEditableAt(hour, idx, caretPos){
-  var el = document.querySelector('.entry-item[data-hour="'+hour+'"][data-idx="'+idx+'"]');
-  var group = findGroup(hour);
-  if(!el || !group) return;
-  openEditable(el, group, idx, caretPos || 'start');
+  ed.textContent = text;
+  placeCaretAtOffset(ed, caret);
+  ed.dispatchEvent(new Event('input'));
 }
 
 function buildEntryItemEl(g, itemText, idx){
@@ -1095,79 +1053,102 @@ function buildEntryItemEl(g, itemText, idx){
   contentEl.setAttribute('data-idx', idx);
   contentEl.innerHTML = renderEntryContent(itemText, selectedDate, g.hour);
   contentEl.addEventListener('click', function(e){
+    e.stopPropagation();
     var pill = e.target.closest('.tag-pill-inline');
     if(pill && pill.hasAttribute('data-tag')){
-      e.stopPropagation();
       openTagSearch(pill.getAttribute('data-tag'));
       return;
     }
-    makeItemEditable(contentEl, g, idx, e);
+    var offset = textOffsetFromPoint(contentEl, e.clientX, e.clientY);
+    var block = contentEl.closest('.log-block');
+    if(!block) return;
+    openBlockEditor(g, block, itemsOffset(g, idx) + (offset === null ? itemText.length : offset));
   });
   return contentEl;
 }
 
+function buildBlock(g){
+  var pastDay = selectedDate < todayIso();   // 예정 only makes sense from today on
+  var isToday = selectedDate === todayIso();
+  var nowHour = currentHourStr();
 
-function renderEntries(){
-  var list = document.getElementById('entry-list');
-  list.innerHTML = '';
-  // 예정 only makes sense from today on
-  var pastDay = selectedDate < todayIso();
+  var block = document.createElement('div');
+  block.className = 'log-block';
+  block.setAttribute('data-hour', g.hour);
+  // an already-passed work hour with nothing written: shown faint as a gap
+  if(isToday && g.items.length === 0 && isWorkHour(g.hour) && g.hour < nowHour){
+    block.classList.add('gap');
+  }
 
-  dayData.entries.forEach(function(g){
-    var block = document.createElement('div');
-    block.className = 'log-block';
-    var timeEl = document.createElement('div');
-    timeEl.className = 'log-hour';
-    timeEl.textContent = g.hour;
-    // an hour with nothing in it can be removed
-    if(g.items.length === 0){
-      var hourDel = document.createElement('span');
-      hourDel.className = 'hour-del';
-      hourDel.setAttribute('role', 'button');
-      hourDel.setAttribute('tabindex', '0');
-      hourDel.setAttribute('aria-label', g.hour + ' 시간대 삭제');
-      hourDel.title = '빈 시간대 삭제';
-      hourDel.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
-      var removeHour = function(e){
-        if(e) e.stopPropagation();
-        dayData.entries = dayData.entries.filter(function(x){ return x !== g; });
-        renderEntries();
-      };
-      hourDel.addEventListener('click', removeHour);
-      onActivateKey(hourDel, removeHour);
-      timeEl.appendChild(hourDel);
-    }
-    block.appendChild(timeEl);
+  var timeEl = document.createElement('div');
+  timeEl.className = 'log-hour';
+  timeEl.textContent = g.hour;
+  // an hour with nothing in it can be removed
+  if(g.items.length === 0){
+    var hourDel = document.createElement('span');
+    hourDel.className = 'hour-del';
+    hourDel.setAttribute('role', 'button');
+    hourDel.setAttribute('tabindex', '0');
+    hourDel.setAttribute('aria-label', g.hour + ' 시간대 삭제');
+    hourDel.title = '빈 시간대 삭제';
+    hourDel.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+    var removeHour = function(e){
+      if(e) e.stopPropagation();
+      if(isToday && isWorkHour(g.hour)){
+        (dismissedGaps[selectedDate] = dismissedGaps[selectedDate] || {})[g.hour] = true;
+      }
+      dayData.entries = dayData.entries.filter(function(x){ return x !== g; });
+      renderEntries();
+    };
+    hourDel.addEventListener('click', removeHour);
+    onActivateKey(hourDel, removeHour);
+    timeEl.appendChild(hourDel);
+  }
+  block.appendChild(timeEl);
 
+  if(g.items.length){
     g.items.forEach(function(itemText, idx){
       block.appendChild(buildEntryItemEl(g, itemText, idx));
     });
+  } else {
+    // nothing written yet: the empty text box is there to type into
+    block.appendChild(makeBlockEditor(g, block));
+  }
 
-    var slot = makeLiveSlot(g);
+  if(!pastDay){
     var chip = document.createElement('span');
     chip.className = 'plan-chip';
     chip.textContent = '예정';
-    chip.title = '예정으로 입력';
-
-    // keep focus in the line being typed
+    chip.title = '커서가 있는 줄을 예정으로 표시';
+    // keep focus in the text box
     chip.addEventListener('mousedown', function(e){ e.preventDefault(); });
-    chip.addEventListener('click', function(){
-      var on = slot.getAttribute('data-plan') === '1';
-      if(on) slot.removeAttribute('data-plan'); else slot.setAttribute('data-plan', '1');
-      chip.classList.toggle('on', !on);
-      slot.focus();
+    chip.addEventListener('click', function(e){
+      e.stopPropagation();
+      var ed = openBlockEditor(g, block, 'end');
+      togglePlanOnCaretLine(ed);
     });
-    block.appendChild(slot);
-    if(!pastDay) block.appendChild(chip);
-    // click in the blank area under the entries (or on the hour) to start a new line
-    block.addEventListener('click', function(e){
-      if(e.target !== block && e.target !== timeEl) return;
-      var items = block.querySelectorAll('.entry-item');
-      var last = items.length ? items[items.length - 1] : null;
-      if(e.target === block && last && e.clientY < last.getBoundingClientRect().bottom) return;
-      slot.focus();
-    });
-    list.appendChild(block);
+    block.appendChild(chip);
+  }
+
+  // a click anywhere else in the hour (its time, the blank area) opens the box at the end
+  block.addEventListener('click', function(e){
+    if(e.target.closest('.block-editor')) return;
+    openBlockEditor(g, block, 'end');
+  });
+  return block;
+}
+
+function renderEntries(){
+  // typing in a box right now: don't tear it out; it re-renders on blur
+  if(editingBox()){
+    pendingFullRender = true;
+    return;
+  }
+  pendingFullRender = false;
+  var list = document.getElementById('entry-list');
+  list.innerHTML = '';
+  dayData.entries.forEach(function(g){
+    list.appendChild(buildBlock(g));
   });
 
   renderAddHourSelect();
